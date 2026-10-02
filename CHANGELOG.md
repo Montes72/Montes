@@ -25,3 +25,15 @@
   alone.
 - The saved settings gained an `agents` list, and `docs/AGENTS.md` now documents
   the installer and the `PermissionRequest` limitation for third-party agents.
+
+### Phase 3 — our own character
+
+- Drew a character of our own: a superellipse body (n = 2.2), sphere-projected
+  eyes (0.27 R × 0.29 R, ±0.35 rad apart, tilted −0.10 rad), a 2 px inverse-tone
+  pupil rim and an antenna — a 0.35 R stalk with a 0.14 R dot that wobbles on
+  every state change, sways while working and hops on error.
+- The body is monochrome: the state colour lives in the halo behind the
+  character, the badge and the eye shape; rate limiting gets a diagonal hatch.
+- The greeting and the mini bots use the same creature, and `scripts/gen-icons.mjs`
+  was rewritten to draw it — the PNG/ICO set under `src-tauri/icons/` is
+  regenerated from scratch, so no original artwork remains.

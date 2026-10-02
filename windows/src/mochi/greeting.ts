@@ -1,5 +1,6 @@
-// The launch "peek" greeting — port of GreetingCanvasView.swift.
-// Everything is laid out in the same 640×150 reference space as on macOS.
+// The launch "peek" greeting. Everything is laid out in a 640×150 reference
+// space; the character matches `engine.ts` — a superellipse body with an
+// antenna — so the greeting and the island show the same creature.
 
 import { Sound } from "../core/sound";
 import { COMPACT_W, NOTCH_H, NOTCH_W } from "../core/layout";
@@ -248,8 +249,8 @@ function rr(x: CanvasRenderingContext2D, X: number, Y: number, W: number, H: num
   x.closePath();
 }
 
-function mochiPath(hw: number, hh: number): Path2D {
-  const n = 3.2;
+function montesPath(hw: number, hh: number): Path2D {
+  const n = 2.2; // superellipse |x/hw|^n + |y/hh|^n = 1
   const p = new Path2D();
   const steps = 96;
   for (let i = 0; i <= steps; i++) {
@@ -327,7 +328,7 @@ function drawHandR(x: CanvasRenderingContext2D, hw: number, hh: number, p: Pose)
   x.restore();
 }
 
-function drawMochi(x: CanvasRenderingContext2D, p: Pose) {
+function drawMontes(x: CanvasRenderingContext2D, p: Pose) {
   const hh = p.hb / 2;
   const hw = hh * ASP;
   if (hh <= 0.4) return;
@@ -354,22 +355,28 @@ function drawMochi(x: CanvasRenderingContext2D, p: Pose) {
   x.rotate(p.tilt);
   x.scale(p.sx, p.sy);
 
+  // Antenna (stalk + dot), drawn first so the body covers its base.
+  const antLen = hh * 0.4;
+  const antBase = -hh * 0.9;
+  x.strokeStyle = "#16171A";
+  x.lineCap = "round";
+  x.lineWidth = Math.max(1, hh * 0.05);
+  x.beginPath();
+  x.moveTo(0, antBase);
+  x.quadraticCurveTo(0, antBase - antLen * 0.62, 0, antBase - antLen);
+  x.stroke();
+  x.beginPath();
+  x.arc(0, antBase - antLen, hh * 0.08, 0, Math.PI * 2);
+  x.fillStyle = "#16171A";
+  x.fill();
+
   drawHandL(x, hw, hh, p);
   drawHandR(x, hw, hh, p);
 
-  const body = mochiPath(hw, hh);
+  const body = montesPath(hw, hh);
   whiteFill(x, body, hw * 0.6, -hh, -hw * 0.6, hh);
 
-  if (p.tint > 0) {
-    const g = x.createLinearGradient(0, hh, 0, -hh * 0.1);
-    g.addColorStop(0, `rgba(127,180,234,${p.tint})`);
-    g.addColorStop(1, "rgba(127,180,234,0)");
-    x.save();
-    x.clip(body);
-    x.fillStyle = g;
-    x.fill(body);
-    x.restore();
-  }
+  // The body stays monochrome — the greeting's gold→blue halo carries the colour.
 
   // Eyes
   x.save();
@@ -473,7 +480,7 @@ function drawMinis(x: CanvasRenderingContext2D, alpha: number) {
     x.translate(cx + dx, cy + dy);
     x.scale(alpha, alpha);
     x.fillStyle = MINI_COLORS[i];
-    x.fill(mochiPath(5.3, 4));
+    x.fill(montesPath(5.3, 4));
     x.restore();
   });
 }
@@ -561,6 +568,6 @@ export class Greeting {
     }
 
     drawMinis(x, p.minis);
-    drawMochi(x, p);
+    drawMontes(x, p);
   }
 }

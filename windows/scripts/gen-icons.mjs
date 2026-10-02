@@ -1,6 +1,7 @@
-// Draws Mochi into the PNG/ICO set Tauri needs. No dependencies: the icons are
-// rasterised here and encoded with node:zlib, so the app icon stays "drawn in
-// code" like the character itself.
+// Draws Montes (superellipse body n = 2.2, sphere eyes, antenna) into the
+// PNG/ICO set Tauri needs. No dependencies: the icons are rasterised here and
+// encoded with node:zlib, so the app icon stays "drawn in code" like the
+// character itself.
 //
 //   node scripts/gen-icons.mjs
 
@@ -11,18 +12,18 @@ import { fileURLToPath } from "node:url";
 
 const OUT = join(dirname(fileURLToPath(import.meta.url)), "..", "src-tauri", "icons");
 
-// ── Mochi ─────────────────────────────────────────────────────────────────────
+// ── Montes ────────────────────────────────────────────────────────────────────
 
-const BASE_TOP = [255, 250, 245]; // #FFFAF5
-const BASE_BOTTOM = [221, 204, 191]; // #DDCCBF
+const BASE_TOP = [237, 237, 239]; // #EDEDEF
+const BASE_BOTTOM = [196, 197, 202]; // #C4C5CA
 const INK = [26, 20, 18]; // #1A1412
 const RIM = [0, 0, 0];
 
 const SS = 4; // supersampling factor
 
-/** Superellipse (exponent 2.7) test in body-local coordinates. */
+/** Superellipse (exponent 2.2) test in body-local coordinates. */
 function insideBody(x, y, rx, ry) {
-  const n = 2.7;
+  const n = 2.2;
   return Math.pow(Math.abs(x / rx), n) + Math.pow(Math.abs(y / ry), n) <= 1;
 }
 
@@ -35,7 +36,7 @@ function insidePill(x, y, w, h) {
   return (x - cx) ** 2 + (y - cy) ** 2 <= r * r;
 }
 
-function renderMochi(size) {
+function renderMontes(size) {
   const px = new Uint8Array(size * size * 4);
   const R = size * 0.34;
   const rx = R * 1.14;
@@ -44,36 +45,48 @@ function renderMochi(size) {
   const cy = size / 2 + R * 0.06;
   const rim = R * 0.055; // dark outline so the tray icon reads on light themes
 
-  // Eyes — same geometry as BotEngine (yaw ±0.37, pitch −0.12)
-  const eyeYaw = 0.37;
-  const eyePitch = -0.12;
+  // Eyes — same geometry as BotEngine (yaw ±0.35, pitch −0.10), 0.27 R × 0.29 R.
+  const eyeYaw = 0.35;
+  const eyePitch = -0.10;
   const cp = Math.cos(eyePitch);
   const ex = Math.sin(eyeYaw) * cp * rx;
   const ey = -Math.sin(eyePitch) * ry;
   const fx = Math.max(0.18, Math.cos(eyeYaw));
   const fy = Math.max(0.18, cp);
-  const ew = R * 0.25 * fx;
-  const eh = R * 0.27 * fy;
+  const ew = R * 0.27 * fx;
+  const eh = R * 0.29 * fy;
+
+  // Antenna — 0.35 R stalk with a 0.14 R dot on top.
+  const antBaseY = -ry * 0.9;
+  const antTipY = antBaseY - R * 0.35;
+  const antHW = Math.max(0.6, R * 0.05);
+  const dotR = R * 0.07;
+  const insideEye = (x, y) =>
+    insidePill(x + ex, y - ey, ew, eh) || insidePill(x - ex, y - ey, ew, eh);
+  const insideAntenna = (x, y) => {
+    const t = Math.max(0, Math.min(1, (y - antBaseY) / (antTipY - antBaseY)));
+    return Math.hypot(x, y - (antBaseY + t * (antTipY - antBaseY))) <= antHW ||
+      Math.hypot(x, y - antTipY) <= dotR;
+  };
 
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       let bodyHits = 0;
       let rimHits = 0;
-      let eyeHits = 0;
+      let inkHits = 0;
       for (let sy = 0; sy < SS; sy++) {
         for (let sx = 0; sx < SS; sx++) {
           const px0 = x + (sx + 0.5) / SS - cx;
           const py0 = y + (sy + 0.5) / SS - cy;
-          if (!insideBody(px0, py0, rx + rim, ry + rim)) continue;
+          const inBody = insideBody(px0, py0, rx, ry);
+          const inRim = inBody || insideBody(px0, py0, rx + rim, ry + rim);
+          // The stalk only counts above the body, so it never paints a dark
+          // stub down into the crown.
+          const onInk = insideEye(px0, py0) || (!inBody && insideAntenna(px0, py0));
+          if (!inRim && !onInk) continue;
           rimHits++;
-          if (!insideBody(px0, py0, rx, ry)) continue;
-          bodyHits++;
-          if (
-            insidePill(px0 + ex, py0 - ey, ew, eh) ||
-            insidePill(px0 - ex, py0 - ey, ew, eh)
-          ) {
-            eyeHits++;
-          }
+          if (inBody) bodyHits++;
+          if (onInk) inkHits++;
         }
       }
       if (rimHits === 0) continue;
@@ -81,28 +94,28 @@ function renderMochi(size) {
       const total = SS * SS;
       const rimA = rimHits / total;
       const bodyA = bodyHits / total;
-      const eyeA = eyeHits / total;
+      const inkA = inkHits / total;
 
       // Body gradient: top-right → bottom-left, like the Canvas gradient.
       const t = Math.min(1, Math.max(0, ((x - cx) * -0.6 + (y - cy) * 0.8) / (2 * ry) + 0.5));
       const body = [0, 1, 2].map((i) => BASE_TOP[i] + (BASE_BOTTOM[i] - BASE_TOP[i]) * t);
 
-      // rim under body, body over rim, eyes over body
+      // rim under body, ink (eyes + antenna) over body
       let col = RIM.slice();
-      let alpha = rimA;
       if (bodyA > 0) {
-        col = col.map((c, i) => c * (1 - bodyA / rimA) + body[i] * (bodyA / rimA));
-        alpha = rimA;
+        const k = Math.min(1, bodyA / rimA);
+        col = col.map((c, i) => c * (1 - k) + body[i] * k);
       }
-      if (eyeA > 0) {
-        col = col.map((c, i) => c * (1 - eyeA) + INK[i] * eyeA);
+      if (inkA > 0) {
+        const k = Math.min(1, inkA / rimA);
+        col = col.map((c, i) => c * (1 - k) + INK[i] * k);
       }
 
       const o = (y * size + x) * 4;
       px[o] = Math.round(col[0]);
       px[o + 1] = Math.round(col[1]);
       px[o + 2] = Math.round(col[2]);
-      px[o + 3] = Math.round(Math.min(1, alpha) * 255);
+      px[o + 3] = Math.round(Math.min(1, rimA) * 255);
     }
   }
   return px;
@@ -182,7 +195,7 @@ function encodeICO(entries) {
 
 mkdirSync(OUT, { recursive: true });
 
-const png = (size) => encodePNG(size, renderMochi(size));
+const png = (size) => encodePNG(size, renderMontes(size));
 
 const files = {
   "32x32.png": png(32),

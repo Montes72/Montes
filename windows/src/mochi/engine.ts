@@ -1,8 +1,12 @@
-// Mochi — direct port of NotchBuddy/Sources/App/BotEngine.swift to Canvas 2D.
-// Same constants, same tweens, same easings, same particles. The only intentional
-// difference is the `happy`/`wink` eye arc, which follows the prototype
-// (design/prototype/notch-buddy.html, the visual source of truth) — the Swift
-// arc angles produce a different shape.
+// Montes — the character, drawn directly with Canvas 2D.
+//
+// The body is a superellipse (n = 2.2) sampled into a closed path; the eyes are
+// projected onto a sphere (yaw/pitch/roll, perspective, clipped to the
+// silhouette) and a single antenna — stalk plus a dot — carries the mood. The
+// body itself is monochrome: the state colour lives in the halo behind the
+// character (`#bot-glow`), in the badge glyph and in the eye shape. The tween,
+// easing, particle and mouth-spring machinery is unchanged from the original
+// engine.
 
 import { Ease, lerp, type EaseFn } from "../core/anim";
 import { Sound } from "../core/sound";
@@ -36,7 +40,8 @@ interface Tween {
 
 type PropKey =
   | "yaw" | "pitch" | "roll" | "tilt" | "open" | "sx" | "sy"
-  | "oy" | "ox" | "tint" | "morph" | "hands" | "blush" | "es" | "badgeS";
+  | "oy" | "ox" | "tint" | "morph" | "hands" | "blush" | "es" | "badgeS"
+  | "ant" | "antY";
 
 interface BotStateCfg {
   color: RGB;
@@ -58,12 +63,14 @@ interface Particle {
   age: number; life: number; rot: number; size: number;
 }
 
-// ── Constants (MochiConst / PISTES.mochi) ─────────────────────────────────────
+// ── Constants (MontesConst) ───────────────────────────────────────────────────
 
-const EYE_W = 0.25;
-const EYE_H = 0.27;
-const EYE_SP = 0.37;
-const EYE_P = -0.12;
+// Eye geometry on the sphere: half-width 0.27 R, half-height 0.29 R, ±0.35 rad
+// apart, tilted back by 0.10 rad.
+const EYE_W = 0.27;
+const EYE_H = 0.29;
+const EYE_SP = 0.35;
+const EYE_P = -0.10;
 const BASE_TOP: RGB = [0.929, 0.929, 0.937]; // #EDEDEF
 const BASE_BOTTOM: RGB = [0.769, 0.773, 0.792]; // #C4C5CA
 const INK = "rgb(26,20,18)"; // #1A1412
@@ -166,13 +173,16 @@ const FONT = `system-ui, "Segoe UI Variable Text", "Segoe UI", sans-serif`;
 
 export class BotEngine {
   isMini = false;
-  /** Solid body colour for mini bots / integration pills (null = Mochi gradient). */
+  /** Solid body colour for mini bots / integration pills (null = Montes gradient). */
   bodyColor: RGB | null = null;
 
   // Animated state (BotEngine `s`)
   yaw = 0; pitch = 0; roll = 0; tilt = 0; open = 1;
   sx = 1; sy = 1; oy = 0; ox = 0;
   tint = 0; morph = 0; hands = 0; blush = 0; es = 1; badgeS = 0;
+
+  // Antenna: `ant` is the sway in radians, `antY` an upward hop in fractions of R.
+  ant = 0; antY = 0;
 
   // Targets
   tgYaw = 0; tgPitch = 0; tgTilt = 0; tgSy = 1; tgSx = 1; tgEs = 1;
@@ -242,6 +252,8 @@ export class BotEngine {
           [0.08, 50, Ease.out], [-0.08, 70, Ease.inOut],
           [0.05, 70, Ease.inOut], [0, 90, Ease.out],
         ]);
+        // The antenna hops once when something breaks.
+        this.anim("antY", [[-0.16, 130, Ease.out], [0.02, 170, Ease.inOut], [0, 220, Ease.back]]);
         break;
       case "approval":
         this.anim("oy", [[-0.2, 150, Ease.out], [0, 300, Ease.back]]);
@@ -258,6 +270,15 @@ export class BotEngine {
       default:
         if (prev !== "idle" || next !== "idle") this.blink();
     }
+
+    // Every state change flicks the antenna, so the mood reaches the dot too.
+    const dir = Math.random() < 0.5 ? -1 : 1;
+    this.anim("ant", [
+      [0.4 * dir, 150, Ease.out],
+      [-0.22 * dir, 160, Ease.inOut],
+      [0.1 * dir, 140, Ease.inOut],
+      [0, 200, Ease.back],
+    ]);
   }
 
   setBadge(b: Badge | null) {
@@ -466,6 +487,7 @@ export class BotEngine {
       Math.abs(this.tgSx - this.sx) > 0.002 ||
       Math.abs(this.tgEs - this.es) > 0.002 ||
       this.slotH > 0.001 || Math.abs(this.slotHVel) > 0.001 ||
+      Math.abs(this.ant) > 0.002 || Math.abs(this.antY) > 0.002 ||
       Math.abs(this.col[0] - this.colT[0]) > 0.003 ||
       Math.abs(this.col[1] - this.colT[1]) > 0.003 ||
       Math.abs(this.col[2] - this.colT[2]) > 0.003
@@ -581,6 +603,11 @@ export class BotEngine {
       if (this.permanentEye) this.eyeOverrideUntil = Number.POSITIVE_INFINITY;
     }
 
+    // Antenna: a continuous sway while working, on top of the state-change flick.
+    if (this.state === "working" && !this.locks.has("ant")) {
+      this.ant = Math.sin(t * 3.4) * 0.5;
+    }
+
     if (n - this.lastAmbient > 1.3) {
       this.lastAmbient = n;
       if (this.cfg.zz) this.emit("z", 1);
@@ -654,15 +681,19 @@ export class BotEngine {
     if (this.tilt !== 0) x.rotate(this.tilt);
     x.scale(this.sx, this.sy);
 
+    // Antenna first, so the body covers the base of the stalk.
+    this.drawAntenna(x, R, ry);
+
     const body = this.bodyPath(rx, ry, R);
     this.drawBody(x, body, R, rx, ry);
 
-    const blushVal = Math.max(this.blush, this.tint * 0.5) * (1 - this.morph);
+    const blushVal = this.blush * (1 - this.morph);
     if (blushVal > 0.01) {
       x.save();
       x.clip(body);
       const yOffset = Math.sin(this.yaw) * rx * 0.8;
-      x.fillStyle = `rgba(255,120,150,${0.5 * blushVal})`;
+      // A warm grey flush, so the character stays monochrome.
+      x.fillStyle = `rgba(96,84,92,${0.32 * blushVal})`;
       for (const sd of [-1, 1]) {
         x.beginPath();
         x.ellipse(sd * rx * 0.55 + yOffset, ry * 0.2, R * 0.17, R * 0.1, 0, 0, Math.PI * 2);
@@ -682,9 +713,48 @@ export class BotEngine {
     this.drawParticles(x, R, cx, cy);
   }
 
+  /**
+   * The antenna: a stalk that springs from the crown and a dot on top. It is
+   * drawn before the body so the body hides the base of the stalk. Mini bots are
+   * too small for a stalk, so they keep just the dot.
+   */
+  private drawAntenna(x: CanvasRenderingContext2D, R: number, ry: number) {
+    if (this.isMini) {
+      x.fillStyle = this.bodyColor ? "rgba(255,255,255,0.92)" : MINI_INK;
+      x.beginPath();
+      x.arc(0, -ry - R * 0.12, R * 0.1, 0, Math.PI * 2);
+      x.fill();
+      return;
+    }
+
+    const baseY = -ry * 0.9;
+    const len = R * 0.35;                 // stalk: 0.35 R
+    const tipX = Math.sin(this.ant) * len;
+    const tipY = baseY - Math.cos(this.ant) * len - this.antY * R;
+
+    x.strokeStyle = INK;
+    x.lineCap = "round";
+    x.lineWidth = Math.max(1, R * 0.045);
+    x.beginPath();
+    x.moveTo(0, baseY);
+    x.quadraticCurveTo(tipX * 0.35, baseY - len * 0.62, tipX, tipY);
+    x.stroke();
+
+    // The dot: 0.14 R across, with a tiny inverse-tone centre.
+    x.beginPath();
+    x.arc(tipX, tipY, R * 0.07, 0, Math.PI * 2);
+    x.fillStyle = INK;
+    x.fill();
+    x.beginPath();
+    x.arc(tipX, tipY, R * 0.032, 0, Math.PI * 2);
+    x.fillStyle = "rgba(255,255,255,0.9)";
+    x.fill();
+  }
+
   private bodyPath(rx: number, ry: number, R: number): Path2D {
     const n = 72;
-    const expN = 2.0 / 2.7;
+    // Superellipse |x/rx|^n + |y/ry|^n = 1 with n = 2.2.
+    const expN = 2.0 / 2.2;
     const tw = R * 1.0;
     const th = R * 0.94;
     const tr = R * 0.42;
@@ -723,13 +793,22 @@ export class BotEngine {
     x.fillStyle = g;
     x.fill(body);
 
-    const effectiveTint = this.tint * (1 - this.morph);
-    if (effectiveTint > 0.01) {
-      const tg = x.createLinearGradient(0, ry, 0, -ry);
-      tg.addColorStop(0, rgba(this.col, 0.72 * effectiveTint));
-      tg.addColorStop(1, rgba(this.col, 0));
-      x.fillStyle = tg;
-      x.fill(body);
+    // The body stays monochrome — the state colour lives in the halo, not here.
+    // Rate limiting is the one exception: it gets a diagonal hatch, the visual
+    // shorthand for "slow down".
+    if (this.state === "ratelimit" && this.morph < 0.5) {
+      x.save();
+      x.clip(body);
+      x.strokeStyle = "rgba(20,20,26,0.11)";
+      x.lineWidth = Math.max(1, R * 0.03);
+      const step = R * 0.17;
+      for (let d = -2 * rx; d <= 2 * rx; d += step) {
+        x.beginPath();
+        x.moveTo(d - ry, -ry);
+        x.lineTo(d + ry, ry);
+        x.stroke();
+      }
+      x.restore();
     }
 
     const sh = x.createRadialGradient(0, 0, R * 0.15, 0, 0, R * 1.25);
@@ -796,12 +875,14 @@ export class BotEngine {
         const hh = Math.max(h * this.open, w * 0.3);
         roundRectPath(x, -w / 2, -hh / 2, w, hh, Math.min(w / 2, hh / 2));
         x.fill();
+        this.pupilRim(x);
         break;
       }
       case "dot":
         x.beginPath();
         x.arc(0, 0, w * 0.45, 0, Math.PI * 2);
         x.fill();
+        this.pupilRim(x);
         break;
       case "line":
         x.rotate(-sd * 0.2);
@@ -889,6 +970,15 @@ export class BotEngine {
         break;
       }
     }
+  }
+
+  /** A 2 px inverse-tone outline around the solid pupils. */
+  private pupilRim(x: CanvasRenderingContext2D) {
+    const prev = x.strokeStyle;
+    x.strokeStyle = "rgba(255,255,255,0.9)";
+    x.lineWidth = this.isMini ? 1 : 2;
+    x.stroke();
+    x.strokeStyle = prev;
   }
 
   /** Mailbox slot: dark pill cut into the box face, with rim and lip highlights. */
