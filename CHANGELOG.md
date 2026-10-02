@@ -111,13 +111,33 @@
 
 ### Build — the Windows toolchain
 
+- **MSVC is now the supported toolchain** (Visual Studio 2022 Build Tools, MSVC
+  14.44, plus the `stable-x86_64-pc-windows-msvc` Rust host). It is the default
+  `rustup` host, so a release build needs no path juggling at all — no MinGW, no
+  ASCII-only checkout path, no hand-written `PATH`.
+- The 12 Rust tests now run. On the GNU target they compiled and then died at
+  startup with `0xC0000139` (STATUS_ENTRYPOINT_NOT_FOUND), which meant the hook
+  tests had never actually executed here.
+- One of those tests failed for real: `an_agents_hooks_never_collide_with_claudes_or_with_each_other`
+  asserted that removing an agent takes a whole event key with it, while building
+  its fixture with Claude's *full* event list — so Claude also held `Stop`, and
+  the key correctly stayed. The test was wrong, not the code. It now gives Claude
+  one event so the "last owner leaves, key goes" case is reachable, and adds the
+  mirror-image check that removing an agent must not take Claude's own hook with
+  it.
+- `pack.mjs` picks the build directory itself: MSVC's `target/release`, or a GNU
+  `target/<triple>/release`, overridable with `MONTES_TARGET_DIR`. It ships
+  `WebView2Loader.dll` only when the build actually produced one — MSVC links
+  WebView2 statically, so an MSVC build is a 2.70 MB zip instead of 2.93 MB and a
+  3-file folder instead of 4.
 - `reqwest` now speaks **SChannel** (`native-tls`) instead of `rustls`. `ring`
   needs a full C compiler to build; SChannel uses the Windows trust store,
   which is the right backend for a Windows-only app anyway.
 - The library target is `rlib` only. `staticlib`/`cdylib` exist for the mobile
   targets Phase 0 removed, and on the GNU target the cdylib export table
   overflows the 64k ordinal limit and breaks the link.
-- Building without MSVC (`x86_64-pc-windows-gnu`) needs a complete MinGW-w64 GCC —
+- The GNU toolchain (`x86_64-pc-windows-gnu`) still works as a fallback and needs
+  a complete MinGW-w64 GCC —
   `windres` shells out to the C preprocessor, so a bare binutils is not enough —
   and it must run from an **ASCII-only path**: `windres` cannot open the icon
   through a non-ASCII path (`Invalid argument`) and the GNU linker will not find

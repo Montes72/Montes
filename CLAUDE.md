@@ -53,6 +53,24 @@ cargo build --release --features montes/custom-protocol -p montes -p montes-hook
 `pages: DEV SERVER …`. `npm run pack` fails on the second. It cannot be a default
 feature — that would break `tauri dev`, which needs the dev server.
 
+### Toolchains
+MSVC (Visual Studio 2022 Build Tools + `stable-x86_64-pc-windows-msvc`) is the
+supported one and is the default `rustup` host, so `cargo build --release` just
+works. The GNU target works as a fallback but needs a full MinGW-w64 GCC and an
+ASCII-only checkout path, and takes an explicit `--target`, so its output lands
+in `target/x86_64-pc-windows-gnu/release`. `pack.mjs` prefers the MSVC build and
+falls back to the GNU one; `MONTES_TARGET_DIR` overrides.
+
+Run the tests with MSVC:
+
+```
+call "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+cargo test --release -p montes -p montes-hook
+```
+
+They do not run on the GNU target: the binaries die at startup with
+`0xC0000139` (STATUS_ENTRYPOINT_NOT_FOUND).
+
 ## Rules
 - Windows 10/11 x64 only. No macOS `NotchBuddy/`, no Linux code: keep it that
   way — do not re-add `#[cfg(unix)]` branches or platform abstractions.

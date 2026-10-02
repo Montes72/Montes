@@ -73,10 +73,22 @@ You need [Rust](https://rustup.rs), [Node 20+](https://nodejs.org), and the
 **MSVC build tools** (Visual Studio Build Tools with "Desktop development with
 C++"). WebView2 ships with Windows 10/11.
 
-Without MSVC the `x86_64-pc-windows-gnu` target works too, but it needs a
-complete MinGW-w64 GCC (bare binutils is not enough — `windres` shells out to the
-C preprocessor) and the build has to run from an ASCII-only path, because the
-resource compiler cannot open the icon through a non-ASCII one.
+MSVC is the supported toolchain and the default `rustup` host, so it needs
+nothing special:
+
+```
+cargo build --release --features montes/custom-protocol -p montes -p montes-hook
+```
+
+The `x86_64-pc-windows-gnu` target also works, but it needs a complete MinGW-w64
+GCC (bare binutils is not enough — `windres` shells out to the C preprocessor), the
+build has to run from an ASCII-only path because the resource compiler cannot open
+the icon through a non-ASCII one, and it needs an explicit `--target`, so its
+output lands in `target/x86_64-pc-windows-gnu/release` rather than
+`target/release`. `pack.mjs` prefers the MSVC build and falls back to the GNU
+one; set `MONTES_TARGET_DIR` to override. Only the GNU build needs
+`WebView2Loader.dll` shipped beside the exe — MSVC links WebView2 statically, so
+that folder is three files instead of two.
 
 > **Release builds must pass `--features montes/custom-protocol`.** Tauri picks
 > the page source at compile time: with that feature the windows serve the
@@ -106,7 +118,7 @@ otherwise needs a real drag from Explorer to see. Neither page ships in the app.
 Montes/                              the runnable folder, also zipped
   Montes.exe                         the assistant
   montes-hook.exe                    the relay it installs for Claude Code
-  WebView2Loader.dll                 the browser engine — keep it beside the exe
+  WebView2Loader.dll                 only in a GNU build — keep it beside the exe
   README.txt                         (in the zip only)
 Montes-Windows-X.Y.Z-portable.zip    the versioned archive
 Montes-Windows-portable.zip          the same file under the rolling name
@@ -120,10 +132,11 @@ everything Montes writes lives in `%LOCALAPPDATA%\Montes` and `%APPDATA%\Montes`
 so deleting those two folders and the program is gone. The `nsis` block stays in
 `tauri.conf.json` if you want the installer back.
 
-`WebView2Loader.dll` is not optional and not a build artefact to clean up. The
-GNU toolchain links it dynamically where MSVC links it statically, and without it
-the app exits with `STATUS_DLL_NOT_FOUND` (0xC0000135) before it can write a
-single log line. `pack.mjs` puts it in the folder and in the zip.
+`WebView2Loader.dll` is not optional **for a GNU build** and not a build artefact
+to clean up. The GNU toolchain links WebView2 dynamically where MSVC links it
+statically, and without it a GNU build exits with `STATUS_DLL_NOT_FOUND`
+(0xC0000135) before it can write a single log line. An MSVC build does not
+produce one, so `pack.mjs` ships it only when it is actually there.
 
 ### Sounds
 

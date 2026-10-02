@@ -27,7 +27,16 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const releaseDir = join(root, "target", "release");
+
+// Two toolchains both build into this project. MSVC is the supported one and
+// writes `target/release`; the GNU one needs an explicit `--target`, so its
+// output lands in `target/<triple>/release`. Prefer the MSVC build when both are
+// there, and let MONTES_TARGET_DIR override when that guess is wrong.
+const targetDir =
+  process.env.MONTES_TARGET_DIR || join(root, "target", "x86_64-pc-windows-msvc", "release");
+const releaseDir = existsSync(join(targetDir, "montes.exe"))
+  ? targetDir
+  : join(root, "target", "release");
 const outDir = join(root, "release");
 const { version } = JSON.parse(
   readFileSync(join(root, "src-tauri", "tauri.conf.json"), "utf8"),
@@ -40,11 +49,14 @@ const CONTENTS = [
   // The opposite on purpose: Claude Code spawns the relay and reads what it
   // prints, inside a terminal that already owns a console.
   { from: join(releaseDir, "montes-hook.exe"), as: "montes-hook.exe", subsystem: "console" },
-  // Built by webview2-com-sys and dropped beside the exe, because the GNU
+  // webview2-com-sys builds this and drops it beside the exe, because the GNU
   // toolchain links WebView2Loader dynamically where MSVC links it statically.
-  // Ship it without this and Montes dies with STATUS_DLL_NOT_FOUND before it can
-  // log a single line — which is exactly how this was found.
-  { from: join(releaseDir, "WebView2Loader.dll"), as: "WebView2Loader.dll" },
+  // Ship it without this and a GNU build dies with STATUS_DLL_NOT_FOUND before it
+  // can log a single line - which is exactly how that was found. An MSVC build
+  // does not produce one, so shipping it there would only be dead weight.
+  ...(existsSync(join(releaseDir, "WebView2Loader.dll"))
+    ? [{ from: join(releaseDir, "WebView2Loader.dll"), as: "WebView2Loader.dll" }]
+    : []),
 ];
 
 const FOLDER = "Montes";
@@ -234,6 +246,15 @@ function zip(entries) {
 
 // ── Write it out ─────────────────────────────────────────────────────────────
 
+// Only the GNU build needs the DLL shipped, so only it is told to keep it.
+const shipsWebView2 = CONTENTS.some((c) => c.as === "WebView2Loader.dll");
+const webviewNote = shipsWebView2
+  ? `
+  WebView2Loader.dll  the browser engine Montes is built on. It has to stay in
+                      this folder; without it Montes does not start.
+`
+  : "";
+
 const readme = `Montes ${version} — portable build for Windows 10/11 x64
 
   Montes.exe          the assistant. Double-click it. It sits at the top of your
@@ -241,11 +262,9 @@ const readme = `Montes ${version} — portable build for Windows 10/11 x64
   montes-hook.exe     the relay Montes sets up for Claude Code. It does nothing on
                       its own — Montes copies it into %LOCALAPPDATA%\\Montes\\bin on
                       first launch.
-  WebView2Loader.dll  the browser engine Montes is built on. It has to stay in
-                      this folder; without it Montes does not start.
-
-Keep all three together. Nothing here is written to, so the whole folder can live
-on a USB stick.
+${webviewNote}
+Keep the files in this folder together. Nothing here is written to, so the whole
+folder can live on a USB stick.
 
 Getting started
   1. Unzip the whole folder.

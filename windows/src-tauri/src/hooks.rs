@@ -691,8 +691,11 @@ mod tests {
             }
         });
 
-        // Claude's set, then two agents, all in the same file.
-        let with_claude = merged_at(&existing, None, &claude_events());
+        // Claude's set, then two agents, all in the same file. Claude is given
+        // one event only, so `Stop` belongs to foo alone and the "last owner
+        // leaves, key goes" case below is actually reachable - the full event
+        // list would leave Claude holding `Stop` too.
+        let with_claude = merged_at(&existing, None, &["PreToolUse"]);
         let with_foo = merged_at(&with_claude, Some("foo"), &["PreToolUse", "Stop"]);
         let with_foobar = merged_at(&with_foo, Some("foobar"), &["PreToolUse"]);
 
@@ -722,8 +725,20 @@ mod tests {
         assert!(!pre.iter().any(|e| entry_is_ours(e, Some("foo"))));
         assert!(pre.iter().any(|e| entry_is_ours(e, Some("foobar"))));
         assert!(pre.iter().any(|e| entry_is_ours(e, None)));
-        // `Stop` was foo's only, so the key goes away entirely.
+        // `Stop` was foo's only, so the key goes away entirely - no empty
+        // array is left behind for Claude Code to trip over.
         assert!(without_foo["hooks"].get("Stop").is_none());
+
+        // And the other way round: an event Claude also holds must survive an
+        // agent being removed, or unticking one agent would silently disable
+        // Claude Code's own hooks.
+        let shared = without_ours_at(&merged_at(&existing, None, &claude_events()), Some("foo"));
+        assert!(
+            shared["hooks"]["Stop"]
+                .as_array()
+                .is_some_and(|s| s.iter().any(|e| entry_is_ours(e, None))),
+            "removing an agent took Claude's own hook with it"
+        );
 
         // Unticking an event removes just that entry.
         let stop_only = merged_at(&with_foobar, Some("foobar"), &[]);
