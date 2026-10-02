@@ -5,7 +5,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import type { Agent, Settings } from "./state";
+import type { Agent, Settings, WindowShot } from "./state";
 
 export const IS_TAURI =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -96,6 +96,11 @@ export const Bridge = {
   chatReset: () => call<void>("chat_reset"),
   /** Copies a dropped file into the inbox. */
   ingestFile: (path: string) => callOrThrow<DroppedFile>("ingest_file", { path }),
+  /**
+   * Asks Rust to draw a window into an off-screen bitmap. Returns the raw
+   * `capture_window` payload — read it with `decodeShot`.
+   */
+  captureWindow: (hwnd: number) => callOrThrow<ArrayBuffer>("capture_window", { hwnd }),
   /** Only ever tells you whether a key exists — never its value. */
   secretPresent: (key: string) => call<boolean>("secret_present", { key }),
   secretSet: (key: string, value: string) => callOrThrow<void>("secret_set", { key, value }),
@@ -119,12 +124,42 @@ export interface IntegrationUpdate {
 
 export type ChatContext =
   | { kind: "file"; name: string; path: string }
-  | { kind: "window"; appName: string; title: string; url?: string };
+  | {
+      kind: "window";
+      appName: string;
+      title: string;
+      url?: string;
+      /** Base64 PNG — what actually lets the model read the window. */
+      image?: string;
+    };
 
 export interface DroppedFile {
   name: string;
   path: string;
   size: number;
+}
+
+/**
+ * Unpacks the `capture_window` payload: a little-endian u32 header length, that
+ * many bytes of JSON, then RGBA rows with nothing between them.
+ *
+ * Split this way rather than shipping an object of numbers because a screenshot is
+ * a few hundred thousand bytes and JSON would spell them out as millions — an
+ * `invoke` that stalls the island for a second on every window drop.
+ */
+export function decodeShot(payload: ArrayBuffer): WindowShot {
+  const headerLen = new DataView(payload).getUint32(0, true);
+  const meta = JSON.parse(
+    new TextDecoder().decode(new Uint8Array(payload, 4, headerLen)),
+  ) as { title: string; className: string; width: number; height: number };
+
+  // A copy, because the transferred buffer is detached from here on and
+  // ImageData will not take a view onto somebody else's memory.
+  const pixels = new Uint8ClampedArray(new Uint8Array(payload, 4 + headerLen));
+  if (pixels.length !== meta.width * meta.height * 4) {
+    throw new Error("the captured window came back truncated");
+  }
+  return { ...meta, pixels };
 }
 
 export interface HookStatus {

@@ -53,6 +53,14 @@ async function main() {
 
   await onEvent<null>("screen-changed", () => void Bridge.reposition());
 
+  // A window carried onto the island. Rust watches for this on its own thread,
+  // because the drag begins in another application and the island is usually
+  // hidden while it happens.
+  await onEvent<{ title: string; className: string }>("window-drag", (d) =>
+    island.onWindowDrag(d),
+  );
+  await onEvent<{ hwnd: number }>("window-drop", (d) => void island.onWindowDrop(d.hwnd));
+
   // The settings window writes preferences; apply them here without a restart.
   await onEvent<Settings>("settings-changed", (s) => {
     State.settings = { ...State.settings, ...s };

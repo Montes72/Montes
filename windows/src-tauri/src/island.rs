@@ -12,6 +12,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, WebviewWindow};
 
+use crate::capture;
 use crate::platform::{self, cursor_physical, left_button_down};
 
 /// Logical size of the full window — the largest island view, like the macOS panel.
@@ -27,6 +28,11 @@ pub const WINDOW_LABEL: &str = "island";
 /// Wider than the macOS 6 pt because a click must never be swallowed.
 const HIT_MARGIN: f64 = 14.0;
 
+/// How far the pointer must travel between press and release, in physical px, for
+/// the island to call it a window drop. A click that jitters a couple of pixels
+/// is not somebody carrying a window across the screen.
+const MIN_DRAG_PX: f64 = 40.0;
+
 #[derive(Serialize, Clone)]
 pub struct CursorPayload {
     pub x: f64,
@@ -40,6 +46,29 @@ pub struct ScreenInfo {
     pub width: f64,
     pub height: f64,
     pub scale: f64,
+}
+
+/// A window whose title bar the user just pressed, and where that press landed.
+/// Held only for the length of one drag.
+struct Grabbed {
+    hwnd: isize,
+    at: (f64, f64),
+}
+
+/// Emitted as soon as a press looks like the start of a window drag, so the
+/// island can say so before the user has carried anything anywhere.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DragPayload {
+    pub title: String,
+    pub class_name: String,
+}
+
+/// Emitted on release over the island: here is the window, draw it.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DropPayload {
+    pub hwnd: isize,
 }
 
 /// The island shape in window-logical coordinates, pushed by the front end.
@@ -272,6 +301,90 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
             }
         }
     });
+}
+
+/// Watches for an application window being carried onto the island.
+///
+/// This one runs for as long as the app does, even while the island is parked down
+/// to its 6 px wake strip. A window drag starts somewhere else on the screen
+/// entirely, so an observer that only looks while the island is on screen would
+/// never see the first half of the gesture — and the island is hidden most of the
+/// time. It also does no IPC and asks the window manager nothing while idle: two
+/// Win32 reads a tick, and an event only when something actually happens.
+///
+/// Press → release is watched as a whole rather than as positions. What makes the
+/// gesture a window drag is that the press landed on a title bar, which is decided
+/// once, at the press; from there all that matters is whether the pointer got far
+/// enough to be carrying something and whether it came to rest over us.
+pub fn spawn_window_drag_poll(app: AppHandle) {
+    std::thread::spawn(move || {
+        let mut was_down = false;
+        let mut grabbed: Option<Grabbed> = None;
+        loop {
+            std::thread::sleep(Duration::from_millis(16));
+
+            let Some((cx, cy)) = cursor_physical() else { continue };
+            let down = left_button_down();
+
+            if down && !was_down {
+                // A press on a title bar may be the start of a window drag; a press
+                // anywhere else is a click, a text selection, or a file on its way
+                // out of Explorer — none of which are ours to interpret.
+                grabbed = match capture::caption_window_at(cx as i32, cy as i32) {
+                    Some((hwnd, title, class_name)) => {
+                        crate::log::line(format!("window drag started: {title}"));
+                        let _ = app.emit_to(
+                            WINDOW_LABEL,
+                            "window-drag",
+                            DragPayload { title, class_name },
+                        );
+                        Some(Grabbed { hwnd, at: (cx, cy) })
+                    }
+                    None => None,
+                };
+            }
+
+            if !down && was_down {
+                let carried = grabbed.take().filter(|g| {
+                    // A press and a release a few pixels apart is a click that
+                    // wandered, not somebody carrying a window across the screen to
+                    // hand it over. Measured as a path length so a slow diagonal
+                    // counts for more than its displacement.
+                    (cx - g.at.0).abs() + (cy - g.at.1).abs() >= MIN_DRAG_PX
+                });
+                if let Some(g) = carried {
+                    // Our own island is never the subject: caption_window_at already
+                    // skips our process, so the hwnd is still the other window's even
+                    // if the pointer is resting on top of us.
+                    if cursor_over_panel(&app, cx as i32, cy as i32) {
+                        crate::log::line("window dropped on the island".to_string());
+                        let _ = app.emit_to(
+                            WINDOW_LABEL,
+                            "window-drop",
+                            DropPayload { hwnd: g.hwnd },
+                        );
+                    }
+                }
+            }
+
+            was_down = down;
+        }
+    });
+}
+
+/// Whether `(cx, cy)` is inside the island window, in physical pixels.
+///
+/// The whole window counts, not just the drawn island shape: while something is
+/// collapsed there is a 6 px strip to aim at, and a miss there would feel like the
+/// app simply ignored the gesture.
+fn cursor_over_panel(app: &AppHandle, cx: i32, cy: i32) -> bool {
+    let Some(win) = window(app) else { return false };
+    let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) else {
+        return false;
+    };
+    let x = cx - pos.x;
+    let y = cy - pos.y;
+    x >= 0 && y >= 0 && x < size.width as i32 && y < size.height as i32
 }
 
 /// Re-applies click-through after the window or the island changed shape.

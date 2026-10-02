@@ -70,9 +70,15 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     State.notify();
     onHeightChange();
 
+    // Context rides along with the first question only, as on macOS. Both the drop
+    // flows set `promptContext`, and the file is the older of the two — kept as
+    // a fallback so a file dropped before this existed still sends something.
     const file = State.droppedFile;
     const context: ChatContext | null =
-      State.chatHistory.length === 1 && file ? { kind: "file", name: file.name, path: file.path } : null;
+      State.chatHistory.length === 1
+        ? State.promptContext ??
+          (file ? { kind: "file", name: file.name, path: file.path } : null)
+        : null;
 
     try {
       const reply = await Bridge.chatSend(query, context);
@@ -104,8 +110,15 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
   return {
     el,
     sync() {
-      const file = State.droppedFile;
-      const wantChip = file?.name ?? "";
+      // The chip says what the question is about: a dropped file, or the window
+      // whose screenshot rides along with the first message.
+      const ctx = State.promptContext;
+      const wantChip =
+        State.chatHistory.length === 0 && ctx
+          ? ctx.kind === "window"
+            ? ctx.title
+            : ctx.name
+          : "";
       if (chipRow.dataset.label !== wantChip) {
         chipRow.dataset.label = wantChip;
         clear(chipRow);

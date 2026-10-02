@@ -40,8 +40,10 @@ Montes; nothing from the original's assets is shipped (see «Assets» below).
 - 💬 **Chat with Claude** — right from the island, with your own Anthropic key.
 - 📎 **Drop a file on the island** — Montes turns into a box, swallows it, then
   answers questions about it.
-- 🪟 **Drag the island onto a window** — captures that window as context for
-  Claude.
+- 🪟 **Drag a window onto the island** — grab any application by its title bar and
+  drop it on Montes. It takes a screenshot with `PrintWindow`, shows it to you, and
+  hands the picture to Claude, so "what's this?" gets an answer about what is
+  actually on screen.
 - 🔌 **Integrations** — Stripe payments, n8n workflows, GitHub, Vercel
   deployments, Resend emails, Notion, Cal.com. Each one gets its own little
   coloured pill.

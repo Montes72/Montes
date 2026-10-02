@@ -2,7 +2,7 @@
 // Mirrors IslandRootView.swift + IslandWindowController.swift.
 
 import { Tracked, Spring, clamp } from "../core/anim";
-import { Bridge, IS_TAURI, onDragDrop } from "../core/bridge";
+import { Bridge, IS_TAURI, decodeShot, onDragDrop } from "../core/bridge";
 import {
   EXPANDED_CORNER, EXPANDED_W, NOTCH_W, PANEL_H, PANEL_W,
   ROUNDED_CORNER, VIEW_LAYOUTS, botGlowColor, botGlowOpacity, botPosition, chatPromptHeight,
@@ -31,6 +31,25 @@ const UPLOAD_VIEWS: ReadonlySet<IslandViewName> = new Set(["upload", "uploading"
 const PRE_PROGRESS = USC.T_PROG_START - USC.T_DROP;
 
 const modeOrder = (m: IslandMode) => (m === "hidden" ? 0 : m === "compact" ? 1 : 2);
+
+/**
+ * The canvas as a bare base64 PNG, or `undefined` if the browser refuses.
+ *
+ * Chromium encodes it for us; doing it here rather than in Rust is why the capture
+ * command does not need an image library at all. The `data:` prefix is stripped
+ * because that is not what the API's `source.data` field expects.
+ */
+function pngBase64(canvas: HTMLCanvasElement): string | undefined {
+  try {
+    const url = canvas.toDataURL("image/png");
+    const at = url.indexOf(",");
+    return at < 0 ? undefined : url.slice(at + 1);
+  } catch {
+    // A tainted canvas would throw; ours never is, but the question must still go
+    // through if one day it is.
+    return undefined;
+  }
+}
 
 export class Island {
   readonly fsm = new IslandStateMachine();
@@ -166,6 +185,7 @@ export class Island {
         State.notify();
       },
       openSettingsWindow: () => void Bridge.openSettingsWindow(),
+      askAboutWindow: () => this.askAboutWindow(),
       blip: () => Sound.play("blip"),
     };
 
@@ -418,6 +438,76 @@ export class Island {
         Sound.play("error");
         window.setTimeout(() => this.setView(State.defaultView()), 2400);
       });
+  }
+
+  // ── Dropped window ──────────────────────────────────────────────────────────
+
+  /**
+   * A press landed on another window's title bar. Rust only tells us this much
+   * early so the island can become a visible target — it says nothing about the
+   * drag having ended anywhere useful, and a press on a title bar is often just
+   * somebody clicking a tab.
+   */
+  onWindowDrag(d: { title: string }) {
+    if (State.paused) return;
+    State.windowDragTitle = d.title;
+    // Opening the island is what turns a 6 px wake strip into something you can
+    // actually aim at. Skipped while an alert is pinned: that view is waiting for
+    // an answer and must not be swapped out from under the user.
+    if (!State.isPinned && State.mode !== "expanded") this.expand(State.defaultView());
+    State.notify();
+  }
+
+  /**
+   * A window was carried onto the island and released. Rust has already decided
+   * this is a drag and not a click; all that is left is to draw it.
+   */
+  async onWindowDrop(hwnd: number) {
+    if (State.paused) return;
+    State.windowDragTitle = null;
+    try {
+      const shot = decodeShot(await Bridge.captureWindow(hwnd));
+      State.windowShot = shot;
+      State.fileDragOver = false;
+      this.engine.animateMorph(0);
+      this.engine.triggerEmote("surprised");
+      Sound.play("approve");
+      this.expand("window");
+    } catch (err) {
+      State.noteMessage = String(err).replace(/^Error:\s*/, "");
+      this.setView("note");
+      Sound.play("error");
+      window.setTimeout(() => this.setView(State.defaultView()), 2400);
+    }
+  }
+
+  /**
+   * "Ask about this": the screenshot goes into the first question as an image, so
+   * the answer is about what is on screen rather than about the window's title.
+   *
+   * The PNG is produced by the same canvas that shows the picture. It is encoded
+   * once, here, rather than when the card is drawn — the card is on screen while
+   * the user reads it, and a 380 px re-encode in the middle of an animation is
+   * exactly the kind of thing that shows up as a stutter.
+   */
+  private askAboutWindow() {
+    const shot = State.windowShot;
+    if (!shot) {
+      this.setView(State.defaultView());
+      return;
+    }
+    const canvas = this.views.get("window")?.el.querySelector("canvas.shot");
+    const image = canvas instanceof HTMLCanvasElement ? pngBase64(canvas) : undefined;
+
+    State.promptContext = {
+      kind: "window",
+      appName: shot.className.replace(/_WidgetWin_\d+$/, "").replace(/_+$/, ""),
+      title: shot.title,
+      image,
+    };
+    State.chatHistory = [];
+    void Bridge.chatReset();
+    this.setView("prompt");
   }
 
   /**

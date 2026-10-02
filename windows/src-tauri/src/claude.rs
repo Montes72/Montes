@@ -59,7 +59,7 @@ impl Chat {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ChatContext {
     File { name: String, path: String },
-    Window { app_name: String, title: String, url: Option<String> },
+    Window { app_name: String, title: String, url: Option<String>, image: Option<String> },
 }
 
 #[derive(Serialize)]
@@ -91,7 +91,16 @@ pub async fn send(
                 }
                 content.push(json!({ "type": "text", "text": format!("File: {name}") }));
             }
-            Some(ChatContext::Window { app_name, title, url }) => {
+            Some(ChatContext::Window { app_name, title, url, image }) => {
+                // The screenshot first, then what it is: the model reads the
+                // picture as part of the question rather than as a caption
+                // attached to somebody else's words.
+                if let Some(image) = image {
+                    content.push(json!({
+                        "type": "image",
+                        "source": { "type": "base64", "media_type": "image/png", "data": image }
+                    }));
+                }
                 let mut text = format!("Context — App: {app_name}, Window: {title}");
                 if let Some(url) = url {
                     text.push_str(&format!(", URL: {url}"));

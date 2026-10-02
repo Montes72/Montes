@@ -21,7 +21,8 @@ export type IslandViewName =
   | "result"
   | "note"
   | "settings"
-  | "greeting";
+  | "greeting"
+  | "window";
 
 export type BotStateName =
   | "idle"
@@ -86,6 +87,10 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
   note: { height: 160, botX: 60, botY: null, botDiameter: 50, agentMode: "column" },
   settings: { height: 160, botX: 54, botY: null, botDiameter: 46, agentMode: "none" },
   greeting: { height: 150, botX: 320, botY: 90, botDiameter: 0, agentMode: "none" },
+  // A dropped window is shown at close to life size: the picture is the point, and
+  // shrinking it to a thumbnail would only make it harder to recognise the window
+  // the user grabbed a moment ago. Montes sits under the screenshot, out of the way.
+  window: { height: 300, botX: 268, botY: 262, botDiameter: 34, agentMode: "none" },
 };
 
 // The upload views above are only the fallback geometry. Once a file is actually

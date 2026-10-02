@@ -1,6 +1,7 @@
 // Montes for Windows — app wiring and the commands the island calls.
 
 mod claude;
+mod capture;
 mod files;
 mod hooks;
 mod integrations;
@@ -299,6 +300,47 @@ fn ingest_file(path: String) -> Result<DroppedFile, String> {
     files::ingest(&path)
 }
 
+/// The window the user dragged onto the island, drawn into an off-screen bitmap.
+///
+/// Returns raw bytes rather than a struct of numbers: a picture is hundreds of
+/// thousands of bytes and JSON would turn them into millions. The payload is a
+/// little-endian u32 header length, that many bytes of JSON (title, class,
+/// width, height) and then RGBA rows — one copy, no base64.
+///
+/// `PrintWindow` asks the other application to render itself and waits for it, so
+/// this runs on a blocking thread: a busy window would otherwise freeze the whole
+/// island, which is the one part of the app that must never stutter.
+#[tauri::command]
+async fn capture_window(hwnd: isize) -> Result<tauri::ipc::Response, String> {
+    let shot = tauri::async_runtime::spawn_blocking(move || capture::capture(hwnd))
+        .await
+        .map_err(|e| format!("the capture task failed: {e}"))??;
+    let header = serde_json::to_vec(&shot_meta(&shot)).map_err(|e| e.to_string())?;
+    let mut out = Vec::with_capacity(header.len() + 4 + shot.pixels.len());
+    out.extend_from_slice(&(header.len() as u32).to_le_bytes());
+    out.extend_from_slice(&header);
+    out.extend_from_slice(&shot.pixels);
+    Ok(tauri::ipc::Response::new(out))
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WindowShotMeta {
+    title: String,
+    class: String,
+    width: u32,
+    height: u32,
+}
+
+fn shot_meta(shot: &capture::WindowShot) -> WindowShotMeta {
+    WindowShotMeta {
+        title: shot.title.clone(),
+        class: shot.class.clone(),
+        width: shot.width,
+        height: shot.height,
+    }
+}
+
 /// The island may only ask whether a key exists — never read it.
 #[tauri::command]
 fn secret_present(key: String) -> bool {
@@ -441,6 +483,7 @@ pub fn run() {
             chat_send,
             chat_reset,
             ingest_file,
+            capture_window,
             secret_present,
             secret_set,
             secret_clear,
@@ -468,6 +511,10 @@ pub fn run() {
             }
             gate.set_active(true);
             island::spawn_cursor_poll(handle.clone(), gate.clone());
+            // Not gated: a window can be dragged onto a hidden island, and the
+            // drag starts in another application, so this one has to be watching
+            // from before the island is ever shown.
+            island::spawn_window_drag_poll(handle.clone());
 
             log::line(format!("--- Montes {} started ---", env!("CARGO_PKG_VERSION")));
             hooks::ensure_hook_exe(&handle);

@@ -34,9 +34,32 @@ export interface ChatMessage {
   content: string;
 }
 
+/**
+ * A window the user dragged onto the island, as Rust drew it.
+ *
+ * The pixels are the exact bytes `capture_window` returned: RGBA, top-down, no
+ * colour profile. They are handed over as a canvas — both to show them and, when
+ * the question is asked, to encode the picture for the API — rather than kept as
+ * a PNG, because decoding one to look at it would be a wasted step.
+ */
+export interface WindowShot {
+  title: string;
+  className: string;
+  width: number;
+  height: number;
+  pixels: Uint8ClampedArray;
+}
+
 export type PromptContext =
-  | { kind: "window"; appName: string; title: string; url?: string }
-  | { kind: "file"; name: string; path?: string };
+  | {
+      kind: "window";
+      appName: string;
+      title: string;
+      url?: string;
+      /** Base64 PNG, attached to the first question so Claude can actually see it. */
+      image?: string;
+    }
+  | { kind: "file"; name: string; path: string };
 
 export interface ResultItem {
   label: string;
@@ -146,6 +169,10 @@ class AppState {
 
   promptContext: PromptContext | null = null;
   droppedFile: { name: string; path: string } | null = null;
+  /** The last window dropped on the island, drawn into `views/window.ts`. */
+  windowShot: WindowShot | null = null;
+  /** Title of the window being carried towards us, shown as a hint mid-drag. */
+  windowDragTitle: string | null = null;
   noteMessage: string | null = null;
   searchResult: SearchResult | null = null;
   chatHistory: ChatMessage[] = [];

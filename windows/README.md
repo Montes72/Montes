@@ -147,5 +147,25 @@ problems. It stays on your machine.
 - Gemini CLI / Antigravity / Cursor / Codex pills and Google AI / OpenAI chat —
   macOS-only in the original and dropped in the fork. Those tools can still be
   wired by hand through **Settings… → Agents**.
-- Speech, window capture and the drag-onto-window flow are scheduled for the
-  Montes milestones (see the plan).
+- Speech is scheduled for a later Montes milestone (see the plan).
+
+## Capturing a window
+
+Grab any window by its **title bar** and drop it on the island. Montes asks Windows
+which window that is (`WindowFromPoint`), has that window redraw itself into an
+off-screen bitmap (`PrintWindow` with `PW_RENDERFULLCONTENT`), and shows it in a
+card with a rainbow edge. Press **Ask about this** and the screenshot goes to
+Claude as an image, so the answer is about what is on screen — not about the
+window's title.
+
+Two things make the gesture safe to leave running all the time:
+
+- A press only arms the gesture if `WM_NCHITTEST` says it landed on a **caption**.
+  A click in a window, a text selection, or a file dragged out of Explorer all
+  return `HTCLIENT` and are left entirely to the island's normal drop handling.
+- The pointer has to travel at least 40 px before the release counts, so a click
+  that jitters is not mistaken for somebody carrying a window across the screen.
+
+The picture is scaled to fit the card with `StretchBlt` and handed to the island
+as raw RGBA, never as base64 or JSON. Windows a GPU-composites may come back
+blank — that is a property of `PrintWindow`, not of the app.

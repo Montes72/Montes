@@ -38,6 +38,31 @@
   was rewritten to draw it — the PNG/ICO set under `src-tauri/icons/` is
   regenerated from scratch, so no original artwork remains.
 
+### Phase 6 — a window dropped on the island
+
+- Grab any application by its **title bar** and drop it on the island: Montes
+  finds the window under the cursor (`WindowFromPoint` → `GetAncestor`), has it
+  redraw itself into an off-screen bitmap (`PrintWindow` with
+  `PW_RENDERFULLCONTENT`, the flag GPU-composited windows need), scales it to fit
+  with `StretchBlt` and shows it in a card with a rainbow edge.
+- **Ask about this** sends the screenshot to Claude as an image block, so the
+  answer is about what is on screen. The window's title is all the "URL" we ever
+  show — reading a browser tab's real address needs UI Automation.
+- A press only arms the gesture when `WM_NCHITTEST` answers `HTCAPTION`, which is
+  what separates a window drag from a click, a text selection or a file leaving
+  Explorer. The release must also land on the island, at least 40 px from the
+  press.
+- The detector runs on its own thread for the life of the app rather than inside
+  the cursor poll: a window drag starts in another application while the island is
+  usually hidden, and a poll parked behind the island's visibility would never see
+  the first half of the gesture.
+- `capture_window` runs on a blocking thread — `PrintWindow` waits for the other
+  application to render, and a busy window must not be able to freeze the island —
+  and returns raw bytes (u32 header length, JSON header, RGBA rows) instead of a
+  struct of numbers, which JSON would spell out as millions. The screenshot is
+  encoded to PNG by the WebView's own canvas when the question is asked, so the
+  app still needs no image library.
+
 ### Build — the Windows toolchain
 
 - `reqwest` now speaks **SChannel** (`native-tls`) instead of `rustls`. `ring`
