@@ -8,7 +8,9 @@ license.workspace = true
 
 [lib]
 name = "montes_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# Windows desktop only: the mobile crate-types (staticlib/cdylib) are not needed
+# and the cdylib export table overflows mingw's 64k ordinal limit on GNU targets.
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -20,7 +22,7 @@ tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 tokio = { version = "1", features = ["net", "io-util", "sync", "time", "rt"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
 
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
