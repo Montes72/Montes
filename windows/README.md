@@ -73,6 +73,11 @@ You need [Rust](https://rustup.rs), [Node 20+](https://nodejs.org), and the
 **MSVC build tools** (Visual Studio Build Tools with "Desktop development with
 C++"). WebView2 ships with Windows 10/11.
 
+Without MSVC the `x86_64-pc-windows-gnu` target works too, but it needs a
+complete MinGW-w64 GCC (bare binutils is not enough — `windres` shells out to the
+C preprocessor) and the build has to run from an ASCII-only path, because the
+resource compiler cannot open the icon through a non-ASCII one.
+
 ```powershell
 cd windows
 npm install
