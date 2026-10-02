@@ -1,36 +1,40 @@
-# Contributing to Coucou
+# Contributing to Montes
 
-Thanks for wanting to help Mochi grow up! 🫶
+Thanks for wanting to help Montes grow up! 🫶
 
 ## Getting started
 
-```bash
-brew install xcodegen
-cd NotchBuddy && xcodegen && open NotchBuddy.xcodeproj
-```
+Montes is Windows-only. You need [Rust](https://rustup.rs), Node 20+ and the
+MSVC build tools (see `windows/README.md`).
 
-Never edit `NotchBuddy.xcodeproj` by hand: change `project.yml` and run `xcodegen`.
-
-Check resting island dimensions on screens with and without a notch:
-
-```bash
-bash scripts/test-screen-geometry.sh
+```powershell
+cd windows
+npm install
+npm run tauri dev      # live-reloading development build
 ```
 
 ## Good first contributions
 
-- A new service integration (a poller + an entry in `PillCatalog.swift` in the `.service` category + a detail card). Look at `StripePoller.swift` for a compact example.
-- A new agent: any agent already gets its own automatic pill by sending `coucou_agent` in its hook payload (see `docs/AGENTS.md`). Add an entry in `PillCatalog.swift` in the `.agent` or `.workspace` category only if you want it to be declarable in Settings → Active pills.
-- A new emote or sound for Mochi.
+- A new service integration (a poller in `src-tauri/src/integrations.rs` +
+  an entry in the pill catalog in `src/core/layout.ts` in the `.service`
+  category + a detail card). Look at `StripePoller` for a compact example.
+- A new agent: any agent already gets its own automatic pill by sending
+  `montes_agent` in its hook payload (see `docs/AGENTS.md`). Add an entry in
+  the pill catalog only if you want it to be declarable in Settings.
+- A new emote or sound for Montes.
 - Bug fixes — please describe how to reproduce.
 
 ## Rules of the house
 
-- Swift 6, SwiftUI + AppKit, **no third-party dependencies** unless there's really no other way.
-- Secrets go in the Keychain, never on disk or in git.
+- Rust + TypeScript, Tauri 2. The character is drawn in Canvas 2D — no
+  Rive/Lottie/images.
+- Windows 10/11 x64 only. Do not re-add macOS or Linux code.
+- Secrets go in the Windows Credential Manager, never on disk or in git.
 - No telemetry, no network calls except to services the user configured.
-- Never block Claude Code: if the app doesn't answer, the hook must exit right away.
-- Never write `~/.claude/settings.json` without a backup and the user's confirmation.
+- Never block Claude Code: if the app doesn't answer, the hook must exit right
+  away.
+- Never write `~/.claude/settings.json` without a backup and the user's
+  confirmation.
 - Keep it light: 0 % CPU when the island is hidden.
 
 ## Pull requests

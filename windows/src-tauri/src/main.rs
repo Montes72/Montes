@@ -1,6 +1,6 @@
-// Coucou runs without a console window: Mochi is the whole UI.
+// Montes runs without a console window: the character is the whole UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    coucou_lib::run()
+    montes_lib::run()
 }

@@ -1,30 +1,59 @@
-# Coucou — guide for AI coding agents
+# Montes — guide for AI coding agents
 
-Coucou is a native macOS app (`NotchBuddy/`); `windows/` is the Tauri version for Windows and Linux. Mochi, a small animated character living in the MacBook notch, shows AI coding agent sessions (Claude Code, Gemini CLI, Antigravity and more) and a few integrations, and lets the user approve, answer, chat and drop files from the notch.
+Montes is the Windows-only fork of Coucou. It is a Tauri 2 app (Rust + TypeScript)
+living in `windows/`: a small animated character sits at the top of the screen,
+shows Claude Code sessions and a few integrations, and lets the user approve,
+answer, chat and drop files without leaving what they're doing.
 
 ## Where things are
-- `NotchBuddy/Sources/App/` — all Swift code. `NotchBuddy/Resources/sounds/` — the 28 WAV sounds. `NotchBuddy/project.yml` — XcodeGen project (never edit the `.xcodeproj` by hand).
-- `NotchBuddy/Sources/App/PillCatalog.swift` — single source of truth for all declared pills (workspace tools, agents, AI providers, services). Every pill ID, color, category and subtitle lives here.
-- `docs/SPEC.md`, `docs/INTEGRATIONS.md` — behaviour, views, states, integrations (in French).
-- `design/prototype/notch-buddy.html` — original prototype, the visual source of truth. `design/captures/` — target screenshots.
-- `windows/` — the Tauri app for Windows and Linux: Rust in `src-tauri/`, TypeScript in `src/`, the `coucou-hook` relay in `hook/`. `windows/README.md` lists what differs from the Mac.
-- `docs/*.html` — the GitHub Pages site (privacy, terms, support, legal notice).
+- `windows/src-tauri/` — the Rust backend: the transparent island window
+  (`platform/windows.rs`), the named pipe and approval flow (`pipe.rs`), the
+  Claude Code hooks manager (`hooks.rs`), the Claude chat (`claude.rs`), the
+  seven service pollers (`integrations.rs`), files inbox/ingest (`files.rs`),
+  secrets in the Windows Credential Manager (`secrets.rs`).
+- `windows/hook/` — `montes-hook.exe`, the tiny relay Claude Code runs on every
+  hook event. Never blocks Claude Code.
+- `windows/src/` — the front end (TypeScript, no framework):
+  `island/` (state machine, hooks, integrations), `views/` (every island view),
+  `mochi/` (the character and its greeting, in Canvas 2D), `settings/`,
+  `upload/` (the file-drop sequence), `core/` (state, layout, sounds).
+- `windows/shared/sounds/` — the WAVs, generated programmatically. The single
+  source of truth for the path is `SOUNDS_DIR` at the top of
+  `windows/vite.config.ts`.
+- `windows/scripts/` — `gen-icons.mjs` (draws the app/tray icons), `pack.mjs`
+  (copies Tauri's bundles into `windows/release/` with release names).
+- `docs/SPEC.md`, `docs/INTEGRATIONS.md`, `docs/AGENTS.md` — the original
+  specifications (French, describing the original macOS app) kept as reference.
+- `docs/AGENTS.md` — the `montes-hook` relay and the agent protocol.
 
 ## Build
 ```
-cd NotchBuddy && xcodegen && xcodebuild -scheme NotchBuddy -configuration Debug build
+cd windows
+npm install
+npm run tauri dev      # live-reloading development build
+npm run pack           # portable zip + exe in windows/release/
 ```
-Windows and Linux: `cd windows && npm install && npm run tauri dev`
 
 ## Rules
-- Swift 6, SwiftUI + AppKit. No third-party dependencies unless truly unavoidable. The character is drawn in code (`Canvas` + `TimelineView`), no Rive/Lottie/images.
-- Secrets live in the Keychain, never on disk or in git.
+- Windows 10/11 x64 only. No macOS `NotchBuddy/`, no Linux code: keep it that
+  way — do not re-add `#[cfg(unix)]` branches or platform abstractions.
+- Tauri 2, Rust + TypeScript. The character is drawn in Canvas 2D, no
+  Rive/Lottie/images.
+- Secrets live in the Windows Credential Manager, never on disk or in git.
 - No telemetry. Network calls only to services the user configured.
-- Never block Claude Code: if the app doesn't answer, the hook exits immediately.
-- Never overwrite `~/.claude/settings.json`: dated backup, merge, show the diff, write only after the user confirms.
-- Never send an email or approve a Claude Code permission without an explicit click.
-- Performance: 0 % CPU when the island is hidden.
-- Keep the bundle identifier `fr.louisraille.NotchBuddy` (Keychain items, preferences and permissions depend on it).
-- Never restyle what already ships (pills, cards, Settings, chat…): existing views stay exactly as they are in `main`, which is the App Store build. Change the look of an existing view only when explicitly asked.
-- Pill IDs are stable contract values (Keychain, UserDefaults, hook routing): never rename an existing pill ID.
-- New views follow the existing app style. `design/prototype/notch-buddy.html` and `design/captures/` are references for new work, not a reason to change existing views.
+- Never block Claude Code: if the app doesn't answer within its deadline, the
+  hook exits immediately and the terminal takes over.
+- Never overwrite `~/.claude/settings.json`: dated backup, merge, show the
+  diff, write only after the user confirms.
+- Never send an email or approve a Claude Code permission without an explicit
+  click.
+- Performance: 0 % CPU when the island is hidden. Pollers pause when nothing
+  watches them.
+- Keep the branded constants consistent: product name `Montes`, identifier
+  `com.montes.app`, pipe `\\.\pipe\montes-<sid>`, `%LOCALAPPDATA%\Montes`,
+  `%APPDATA%\Montes`, marker `montes-hook`.
+- Existing views stay exactly as they are: never restyle what already ships
+  unless explicitly asked.
+- Pill IDs are stable contract values (Credential Manager, settings, hook
+  routing): never rename an existing pill ID.
+- New views follow the existing app style.

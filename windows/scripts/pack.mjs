@@ -16,23 +16,13 @@ const { version } = JSON.parse(readFileSync(join(root, "src-tauri", "tauri.conf.
 // names it is published under (the rolling name, when there is one, always
 // points at the latest release).
 const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
-const debArch = process.arch === "arm64" ? "arm64" : "amd64";
 const PACKAGES = {
   win32: [
     {
       dir: "nsis",
       suffix: "-setup.exe",
-      names: [`Coucou-Windows-${version}-setup.exe`, "Coucou-Windows-setup.exe"],
+      names: [`Montes-Windows-${version}-setup.exe`, "Montes-Windows-setup.exe"],
     },
-  ],
-  linux: [
-    {
-      dir: "appimage",
-      suffix: ".AppImage",
-      names: [`Coucou-Linux-${version}-${arch}.AppImage`, `Coucou-Linux-${arch}.AppImage`],
-    },
-    { dir: "deb", suffix: ".deb", names: [`Coucou-Linux-${version}-${debArch}.deb`] },
-    { dir: "rpm", suffix: ".rpm", names: [`Coucou-Linux-${version}-${arch}.rpm`] },
   ],
 };
 

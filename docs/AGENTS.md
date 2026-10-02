@@ -1,83 +1,58 @@
-# Coucou — third-party agent integration
+# Montes — third-party agent integration
 
-Any tool that can write to a Unix domain socket (macOS, Linux) or a named pipe (Windows) can send events to Coucou and have its own pill next to Claude Code.
+Any tool that can talk to Montes' named pipe can send events and get its own
+pill next to Claude Code.
 
-## The `coucou_agent` field
+## The `montes_agent` field
 
-Add the optional field `coucou_agent` to any hook JSON payload. Coucou will create a pill labelled with the agent name and route all events to it.
+Add the optional field `montes_agent` to any hook JSON payload. Montes will
+create a pill labelled with the agent name and route all events to it.
 
-**Validation:** the name must match `^[a-z0-9-]{1,24}$` (lowercase letters, digits and hyphens, 1–24 characters). An absent or invalid name routes the event to the Claude Code pill instead.
-
-## Hook command (macOS)
-
-Configure your tool to call the Coucou relay with `--agent <your-name>` after the hook executable:
-
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      { "type": "command", "command": "/path/to/nb-hook --agent my-tool" }
-    ]
-  }
-}
-```
-
-The shell wrapper passes `"$@"` to the Python relay, which extracts the agent name and injects it into the payload before forwarding to Coucou.
+**Validation:** the name must match `^[a-z0-9-]{1,24}$` (lowercase letters,
+digits and hyphens, 1–24 characters). An absent or invalid name routes the
+event to the Claude Code pill instead. `claude` is reserved.
 
 ## Hook command (Windows)
 
-Same pattern with the Windows relay:
+Configure your tool to call the relay with `--agent <your-name>` after the
+executable:
 
 ```json
 {
   "hooks": {
     "UserPromptSubmit": [
-      { "type": "command", "command": "C:\\path\\to\\coucou-hook.exe --agent my-tool" }
+      { "type": "command", "command": "C:\\path\\to\\montes-hook.exe --agent my-tool" }
     ]
   }
 }
 ```
 
-## Hook command (Linux)
-
-Same pattern with the Linux relay. Coucou copies the relay to `~/.local/share/coucou/bin/coucou-hook` at startup.
-
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      { "type": "command", "command": "/path/to/coucou-hook --agent my-tool" }
-    ]
-  }
-}
-```
+The relay reads the hook JSON on stdin, adds the terminal context (`cwd`), and
+hands it to Montes over the pipe `\\.\pipe\montes-<user-SID>`. If Montes is not
+running it exits immediately with nothing on stdout — Claude Code is never
+blocked.
 
 ## Payload format
 
-The relay adds `coucou_agent` to the JSON it forwards. You can also add it yourself if you talk to the socket directly:
+The relay adds `montes_agent` to the JSON it forwards to the island. You can
+add it yourself if you talk to the pipe directly:
 
 ```json
 {
   "hook_event_name": "UserPromptSubmit",
   "session_id": "my-session-1",
-  "coucou_agent": "my-tool",
+  "montes_agent": "my-tool",
   "prompt": "Running task…"
 }
 ```
 
-Send newline-terminated JSON to the socket:
-- **macOS (GitHub build):** `~/Library/Application Support/NotchBuddy/nb.sock`
-- **macOS (App Store build):** `~/Library/Containers/fr.louisraille.Coucou/Data/nb.sock`
-- **Windows:** `\\.\pipe\coucou-<user-SID>`
-- **Linux:** `$XDG_RUNTIME_DIR/coucou.sock` (usually `/run/user/<uid>/coucou.sock`). Only your own user account can connect.
-
 ## Supported events
 
 All standard Claude Code hook events are supported, **except `PermissionRequest`**:
-approval cards are not yet implemented for third-party agents (only Claude Code gets
-one). A `PermissionRequest` from an external agent is answered immediately with no
-decision, so the relay writes nothing and the agent re-asks in its terminal.
-Approval support for other agents will be added with Codex support.
+approval cards are not yet implemented for third-party agents (only Claude Code
+gets one). A `PermissionRequest` from an external agent is answered immediately
+with no decision, so the relay writes nothing and the agent re-asks in its
+terminal.
 
 The pill lifecycle:
 
@@ -88,77 +63,39 @@ The pill lifecycle:
 | `PreToolUse` | State → working; tool label shown in ticker |
 | `PostToolUse` / `PostToolUseFailure` | State → working |
 | `Notification` | Rate-limit or question state if applicable |
-| `Stop` | State → finished for 5 s; active declared pills (catalog + checked in Settings) reset to idle — all others are removed |
+| `Stop` | State → finished for 5 s, then the pill is removed |
 | `StopFailure` | State → error |
-| `SessionEnd` | Active declared pills (catalog + checked in Settings) reset to idle — all others are removed |
+| `SessionEnd` | Pill removed |
 | `SubagentStart` / `SubagentStop` | Step added to ticker |
 
-## Declared pills
+## Agent pills vs the Claude pill
 
-A **declared pill** is a catalog entry (`PillCatalog.swift`) that has been enabled in **Settings → Active pills**. When a session ends for a declared pill, the pill stays visible and resets to idle instead of disappearing.
+- The **Claude Code** pill is always there; it keeps the project name and
+  resets to idle after a session instead of disappearing.
+- An **external agent** gets a dynamic pill labelled with its `montes_agent`
+  name, coloured from the name. It appears when its session starts and is
+  removed when the session ends.
+- **Settings → Active pills** picks which integration pills stay visible next
+  to the character (the services and their keys live in the Windows Credential
+  Manager).
 
-A catalog pill that is not checked in Settings behaves like any other agent: it gets an automatic pill when a session starts, and that pill is removed when the session ends.
+## Any other tool
 
-The GitHub build exposes Gemini CLI (`agent_gemini`) and Antigravity (`agent_antigravity`) in Settings → Active pills. Cursor (`agent_cursor`) and Codex (`agent_codex`, GitHub build only) are there too — their pills can be declared and set as the main pill; session support is coming in a future version.
+Follow the generic pattern:
 
-## Real-world examples
-
-### Gemini CLI (macOS)
-
-Coucou supports Gemini CLI out of the box via **Settings → Gemini CLI → Install hooks**.
-The installer writes to `~/.gemini/settings.json` and uses `--agent gemini` so
-Gemini sessions get their own pill. The relay translates Gemini event names to canonical
-Coucou events automatically.
-
-| Gemini CLI event | Canonical event |
-|---|---|
-| `BeforeTool` | `PreToolUse` |
-| `AfterTool` | `PostToolUse` |
-| `BeforeAgent` | `UserPromptSubmit` |
-| `AfterAgent` | `Stop` |
-
-`AfterModel` is not installed — it fires on every response chunk and would flood the island.
-
-### Antigravity — `agy` (macOS)
-
-Coucou supports Antigravity out of the box via **Settings → Antigravity → Install hooks**.
-The installer writes to `~/.gemini/config/hooks.json` (timeouts in seconds) and uses
-`--agent antigravity`. The relay translates `toolCall.name` / `conversationId` to the
-island's `tool_name` / `session_id`.
-
-| Antigravity event | Canonical event |
-|---|---|
-| `PreInvocation` | `UserPromptSubmit` |
-| `PreToolUse` | `PreToolUse` |
-| `PostToolUse` | `PostToolUse` |
-| `PostInvocation` | `PostToolUse` |
-| `Stop` | `Stop` |
-
-### Any other tool
-
-Follow the generic pattern: call `nb-hook --agent <your-name> <EventName>` (macOS),
-`coucou-hook.exe --agent <your-name> <EventName>` (Windows)
-or `~/.local/share/coucou/bin/coucou-hook --agent <your-name> <EventName>` (Linux)
-and let the relay forward the event.
-
-## Quick test (Linux)
-
-With Coucou running:
-
-```sh
-echo '{"hook_event_name":"UserPromptSubmit","session_id":"t1","prompt":"hello","coucou_agent":"demo"}' \
-  | ~/.local/share/coucou/bin/coucou-hook --agent demo
+```
+montes-hook.exe --agent <your-name> <EventName>
 ```
 
-A "demo" pill should appear in the island.
+and let the relay forward the event.
 
-## Quick test (macOS)
+## Quick test (Windows)
 
-With Coucou running:
+With Montes running, from PowerShell:
 
-```sh
-echo '{"hook_event_name":"UserPromptSubmit","session_id":"t1","prompt":"hello","coucou_agent":"demo"}' \
-  | /bin/sh ~/Library/Application\ Support/NotchBuddy/nb-hook --agent demo
+```powershell
+'{"hook_event_name":"UserPromptSubmit","session_id":"t1","prompt":"hello","montes_agent":"demo"}' |
+  & "$env:LOCALAPPDATA\Montes\bin\montes-hook.exe" UserPromptSubmit
 ```
 
 A "demo" pill should appear in the island.

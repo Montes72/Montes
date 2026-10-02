@@ -3,7 +3,7 @@
 // The rule from CLAUDE.md is strict and is followed to the letter:
 // read %USERPROFILE%\.claude\settings.json, take a dated backup, merge without
 // touching anybody else's hooks, show the diff, and write only after an explicit
-// click. Uninstall removes Coucou's entries and nothing else.
+// click. Uninstall removes Montes's entries and nothing else.
 //
 // The command is only the quoted exe path in forward slashes plus the event name:
 // on Windows Claude Code runs hook commands through Git Bash, and anything with
@@ -33,8 +33,8 @@ pub const HOOK_EVENTS: &[(&str, u64)] = &[
     ("SubagentStop", 10),
 ];
 
-/// Marker that identifies a Coucou entry inside settings.json.
-const MARKER: &str = "coucou-hook";
+/// Marker that identifies a Montes entry inside settings.json.
+const MARKER: &str = "montes-hook";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -89,9 +89,9 @@ fn parse_settings(bytes: &[u8], path: &str) -> Result<Value, String> {
     }
     match serde_json::from_slice::<Value>(text) {
         Ok(v) if v.is_object() => Ok(v),
-        Ok(_) => Err(format!("{path} isn't a JSON object — Coucou won't touch it.")),
+        Ok(_) => Err(format!("{path} isn't a JSON object — Montes won't touch it.")),
         Err(err) => Err(format!(
-            "{path} isn't valid JSON ({err}). Fix or move it, then try again — Coucou won't overwrite it."
+            "{path} isn't valid JSON ({err}). Fix or move it, then try again — Montes won't overwrite it."
         )),
     }
 }
@@ -103,25 +103,9 @@ fn read_settings_lossy() -> Value {
     read_settings().unwrap_or_else(|_| json!({}))
 }
 
-#[cfg(windows)]
 fn hook_command(event: &str) -> String {
     let exe = settings::hook_exe_path().to_string_lossy().replace('\\', "/");
     format!("\"{exe}\" {event}")
-}
-
-/// Claude Code runs the command through `sh`, which still reads `$`, `` ` ``
-/// and `\` inside double quotes. Single quotes keep the path a path, whatever
-/// the home directory is called.
-#[cfg(unix)]
-fn hook_command(event: &str) -> String {
-    format!("{} {event}", sh_quote(&settings::hook_exe_path().to_string_lossy()))
-}
-
-/// `s` as one single-quoted shell word: `'` becomes `'\''`, nothing else is
-/// special inside single quotes.
-#[cfg(unix)]
-fn sh_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', r"'\''"))
 }
 
 fn entry_is_ours(entry: &Value) -> bool {
@@ -139,7 +123,7 @@ fn entry_is_ours(entry: &Value) -> bool {
         .unwrap_or(false)
 }
 
-/// Settings with Coucou's hooks added; everything else is left untouched.
+/// Settings with Montes's hooks added; everything else is left untouched.
 fn merged(existing: &Value) -> Value {
     let mut root = existing.as_object().cloned().unwrap_or_default();
     let mut hooks = root
@@ -169,7 +153,7 @@ fn merged(existing: &Value) -> Value {
     Value::Object(root)
 }
 
-/// Settings with every Coucou entry removed, and nothing else changed.
+/// Settings with every Montes entry removed, and nothing else changed.
 fn without_ours(existing: &Value) -> Value {
     let mut root = existing.as_object().cloned().unwrap_or_default();
     let Some(hooks) = root.get("hooks").and_then(Value::as_object).cloned() else {
@@ -300,14 +284,9 @@ pub fn write(install: bool, fingerprint: &str) -> Result<String, String> {
     let mut text = pretty(&next);
     text.push('\n');
 
-    // A dotfiles setup often makes settings.json a symlink: write to the file it
-    // points at, so the link survives the rename below.
-    #[cfg(unix)]
-    let path = std::fs::canonicalize(&path).unwrap_or(path);
-
     // Write beside the target and rename over it: a crash or a full disk leaves
     // the original settings.json intact rather than half a file.
-    let temp = path.with_extension(format!("json.coucou-{}", std::process::id()));
+    let temp = path.with_extension(format!("json.montes-{}", std::process::id()));
     if let Err(err) = write_like(&temp, &path, text.as_bytes()) {
         let _ = std::fs::remove_file(&temp);
         return Err(format!("write failed: {err}"));
@@ -319,33 +298,20 @@ pub fn write(install: bool, fingerprint: &str) -> Result<String, String> {
     Ok(backup.to_string_lossy().to_string())
 }
 
-/// Writes `bytes` to `temp`, which is about to replace `original`.
-///
-/// On Linux a fresh file would get the umask's 0644, and settings.json can hold
-/// API keys in its `env` block: the new file is created readable by us only,
-/// then given the original's permissions, so the rename never widens them.
+/// Writes `bytes` to `temp`, which is about to replace `original`. (The
+/// `original` argument kept its purpose on Unix, where the new file had to be
+/// given the original's permissions; on Windows it is unused.)
 fn write_like(temp: &Path, original: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
     let mut file = options.open(temp)?;
     file.write_all(bytes)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(original)
-            .map(|m| m.permissions().mode() & 0o777)
-            .unwrap_or(0o600);
-        file.set_permissions(std::fs::Permissions::from_mode(mode))?;
-    }
-    #[cfg(not(unix))]
     let _ = original;
     Ok(())
 }
 
-/// Copies the relay (coucou-hook.exe / coucou-hook) into the local data dir's
+/// Copies the relay (montes-hook.exe / montes-hook) into the local data dir's
 /// bin/ on launch. In a bundled install it comes from the app resources; in
 /// `tauri dev` it sits next to the app binary in the workspace target directory.
 ///
@@ -406,26 +372,6 @@ fn install_relay(src: &Path, dest: &Path) {
         if !dest.exists() {
             crate::log::line(format!("could not install {}: {err}", platform::HOOK_EXE));
         }
-    }
-}
-
-/// Linux does not keep the modification time on copy, so the contents decide.
-/// The new relay is written beside the old one and renamed over it: a hook
-/// starting at that moment runs either the old relay or the new one, never half
-/// of one, and a relay that is running right now does not block the update.
-#[cfg(unix)]
-fn install_relay(src: &Path, dest: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    if matches!((std::fs::read(src), std::fs::read(dest)), (Ok(a), Ok(b)) if a == b) {
-        return;
-    }
-    let temp = dest.with_extension(format!("new-{}", std::process::id()));
-    let result = std::fs::copy(src, &temp)
-        .and_then(|_| std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o755)))
-        .and_then(|_| std::fs::rename(&temp, dest));
-    if let Err(err) = result {
-        let _ = std::fs::remove_file(&temp);
-        crate::log::line(format!("could not install {}: {err}", platform::HOOK_EXE));
     }
 }
 
@@ -523,7 +469,7 @@ mod tests {
     #[test]
     fn unreadable_content_is_an_error_never_an_empty_object() {
         // This is the whole bug: returning {} here meant `merged()` produced a
-        // file containing nothing but Coucou's hooks, and the write replaced
+        // file containing nothing but Montes's hooks, and the write replaced
         // everything the user had.
         for bad in [&b"{ not json"[..], &b"[1,2,3]"[..], &b"\"a string\""[..]] {
             assert!(
@@ -581,51 +527,11 @@ mod tests {
         assert_ne!(fingerprint(b""), fingerprint(b"{}"));
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn the_hook_path_is_one_shell_word_whatever_it_contains() {
-        assert_eq!(sh_quote("/home/a b/x"), "'/home/a b/x'");
-        // $, backticks, backslashes and double quotes stay literal in single quotes.
-        assert_eq!(sh_quote(r#"/h/$(id)`x`\"y"#), r#"'/h/$(id)`x`\"y'"#);
-        // A single quote closes, escapes and reopens.
-        assert_eq!(sh_quote("/h/it's"), r"'/h/it'\''s'");
-    }
-
-    /// settings.json can carry API keys in its `env` block: rewriting it must
-    /// never make it readable by more people than before.
-    #[cfg(unix)]
-    #[test]
-    fn rewriting_settings_never_widens_its_permissions() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("coucou-perm-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let original = dir.join("settings.json");
-        let temp = dir.join("settings.json.new");
-        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
-
-        for wanted in [0o600, 0o640, 0o644] {
-            std::fs::write(&original, b"{}").unwrap();
-            std::fs::set_permissions(&original, std::fs::Permissions::from_mode(wanted)).unwrap();
-            let _ = std::fs::remove_file(&temp);
-            write_like(&temp, &original, b"{\"a\":1}").unwrap();
-            assert_eq!(mode(&temp), wanted, "the rewrite must keep {wanted:o}");
-        }
-
-        // No original: ours only.
-        std::fs::remove_file(&original).unwrap();
-        let _ = std::fs::remove_file(&temp);
-        write_like(&temp, &original, b"{}").unwrap();
-        assert_eq!(mode(&temp), 0o600);
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
     /// Everything filesystem-shaped lives in one test on purpose: it points
     /// the home directory at a temp directory, and that is process-wide.
     #[test]
     fn writing_backs_up_preserves_and_refuses_a_changed_file() {
-        let tmp = std::env::temp_dir().join(format!("coucou-hooks-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("montes-hooks-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(tmp.join(".claude")).unwrap();
         std::env::set_var(platform::HOME_VAR, &tmp);
@@ -641,7 +547,7 @@ mod tests {
 
         // Install.
         let plan = preview(true).expect("a BOM must not stop the preview");
-        assert!(plan.diff.contains("coucou-hook"), "the diff must show what changes");
+        assert!(plan.diff.contains("montes-hook"), "the diff must show what changes");
         let backup = write(true, &plan.fingerprint).expect("install should succeed");
 
         // The backup holds the original bytes, BOM and all.
