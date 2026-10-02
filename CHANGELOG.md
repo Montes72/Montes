@@ -63,6 +63,52 @@
   encoded to PNG by the WebView's own canvas when the question is asked, so the
   app still needs no image library.
 
+### Phase 7 — our own sounds, and a build you can carry on a stick
+
+- **All 28 sounds are synthesised from scratch** by `scripts/gen-sounds.mjs` —
+  plain additive synthesis in Node, no samples and no dependencies. It runs on a
+  deterministic `mulberry32`, writes 44.1 kHz 16-bit mono, and each voice is
+  filtered, DC-blocked, mean-removed, tapered over 4 ms and normalised to
+  `0.9 × level` in that order, so nothing clips and nothing drifts.
+- The Windows build is now **portable**: a folder with `Montes.exe`,
+  `montes-hook.exe` and `WebView2Loader.dll`, plus a zip of the same three.
+  `bundle.active` is false and there is no installer — the original NSIS build
+  tripped Defender with `Trojan:Win32/WacatacH!ml`, which is what an unsigned
+  installer unpacking its payload into temp looks like. The `nsis` block stays
+  in `tauri.conf.json` for anyone who wants it back behind one flag.
+- `WebView2Loader.dll` must ship beside `Montes.exe`. The GNU toolchain links it
+  dynamically where MSVC links it statically, and without it the app dies with
+  `STATUS_DLL_NOT_FOUND` (0xC0000135) before it can write a log line. Keeping it
+  out of `bundle.resources` is deliberate: `pack.mjs` owns the list of what ships,
+  so the folder and the zip cannot disagree.
+- `pack.mjs` writes the zip itself — `deflateRawSync` and a CRC32 over the
+  source, no new dependency — and refuses to produce a broken archive. It starts
+  the loose copy, reads back what it logged and fails on a quit code, and it
+  refuses outright if `Montes.exe` is already running, because the app is
+  single-instance and a second copy hands over and exits without ever reaching
+  `setup`.
+
+### Fix — a release build that showed nothing but an error page
+
+- `tauri` decides at compile time which page source to use: with the
+  `custom-protocol` feature it serves the embedded `frontendDist`, without it the
+  windows are still aimed at `http://localhost:1420`. So **every release build
+  made before this fix started perfectly, drew its windows, wrote its log — and
+  filled both with Chromium's "localhost refused to connect" page.** Nothing in
+  the app ran, and nothing in the output said so.
+- `custom-protocol` is now a non-default feature of the `montes` crate. It cannot
+  be a default feature: `tauri dev` needs the dev server, and a default that
+  flipped it would break the development loop. Release builds must therefore pass
+  it explicitly — `cargo build --release --features montes/custom-protocol`.
+- Two guards so this cannot come back quietly. The app logs which page source it
+  was built against (`pages: bundled assets` or `pages: DEV SERVER …`), and
+  `pack.mjs` reads that line back out of the log its own smoke run produced and
+  fails the pack if it says dev server.
+- `build.rs` now emits `rerun-if-changed` for every file under `../dist`.
+  `tauri-build` watches that directory non-recursively, so a bare `cargo build`
+  after a frontend change silently relinked a binary carrying the previous build
+  of the island.
+
 ### Build — the Windows toolchain
 
 - `reqwest` now speaks **SChannel** (`native-tls`) instead of `rustls`. `ring`

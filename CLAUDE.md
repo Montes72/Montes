@@ -18,11 +18,13 @@ answer, chat and drop files without leaving what they're doing.
   `island/` (state machine, hooks, integrations), `views/` (every island view),
   `mochi/` (the character and its greeting, in Canvas 2D), `settings/`,
   `upload/` (the file-drop sequence), `core/` (state, layout, sounds).
-- `windows/shared/sounds/` — the WAVs, generated programmatically. The single
-  source of truth for the path is `SOUNDS_DIR` at the top of
-  `windows/vite.config.ts`.
-- `windows/scripts/` — `gen-icons.mjs` (draws the app/tray icons), `pack.mjs`
-  (copies Tauri's bundles into `windows/release/` with release names).
+- `windows/shared/sounds/` — the 28 WAVs, synthesised from scratch by
+  `scripts/gen-sounds.mjs` (additive synthesis in plain Node, seeded, no
+  dependencies). The single source of truth for the path is `SOUNDS_DIR` at the
+  top of `windows/vite.config.ts`.
+- `windows/scripts/` — `gen-icons.mjs` (draws the app/tray icons),
+  `gen-sounds.mjs` (synthesises the WAVs), `pack.mjs` (writes `windows/release/`
+  and the portable zips).
 - `docs/SPEC.md`, `docs/INTEGRATIONS.md` — the original specifications (French,
   describing the original macOS app) kept as reference.
 - `docs/AGENTS.md` — the `montes-hook` relay and the agent protocol.
@@ -32,8 +34,24 @@ answer, chat and drop files without leaving what they're doing.
 cd windows
 npm install
 npm run tauri dev      # live-reloading development build
-npm run pack           # portable zip + exe in windows/release/
+npm run sounds         # regenerates the 28 WAVs
+npm run pack           # portable folder + zips in windows/release/
 ```
+
+### Release builds need an explicit feature
+Tauri picks the page source at compile time. With `custom-protocol` the windows
+serve the embedded `frontendDist`; without it they are aimed at
+`http://localhost:1420` and show Chromium's "localhost refused to connect" page.
+The app starts perfectly and writes a normal log either way, so nothing but the
+log tells you:
+
+```
+cargo build --release --features montes/custom-protocol -p montes -p montes-hook
+```
+
+`%LOCALAPPDATA%\Montes\montes.log` records `pages: bundled assets` or
+`pages: DEV SERVER …`. `npm run pack` fails on the second. It cannot be a default
+feature — that would break `tauri dev`, which needs the dev server.
 
 ## Rules
 - Windows 10/11 x64 only. No macOS `NotchBuddy/`, no Linux code: keep it that

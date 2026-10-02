@@ -517,6 +517,16 @@ pub fn run() {
             island::spawn_window_drag_poll(handle.clone());
 
             log::line(format!("--- Montes {} started ---", env!("CARGO_PKG_VERSION")));
+            // Which of the two page sources this binary was built against. A
+            // blank island is otherwise indistinguishable from every other kind
+            // of blank, and the wrong answer here is silent: without the
+            // `custom-protocol` feature the webviews keep aiming at the Vite dev
+            // server, and a release build shows "localhost refused to connect".
+            log::line(if cfg!(dev) {
+                "pages: DEV SERVER — not a working release build"
+            } else {
+                "pages: bundled assets"
+            });
             hooks::ensure_hook_exe(&handle);
             pipe::start(handle.clone());
             integrations::start(handle.clone());

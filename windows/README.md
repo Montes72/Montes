@@ -78,10 +78,20 @@ complete MinGW-w64 GCC (bare binutils is not enough — `windres` shells out to 
 C preprocessor) and the build has to run from an ASCII-only path, because the
 resource compiler cannot open the icon through a non-ASCII one.
 
+> **Release builds must pass `--features montes/custom-protocol`.** Tauri picks
+> the page source at compile time: with that feature the windows serve the
+> embedded `frontendDist`, without it they are aimed at `http://localhost:1420`
+> and show Chromium's "localhost refused to connect" page. The app logs which one
+> it got (`pages: bundled assets` or `pages: DEV SERVER …`), and `npm run pack`
+> fails if the log says dev server — but a hand-run `cargo build --release` has
+> nothing but that log line to tell you. It cannot be a default feature, because
+> `tauri dev` needs the dev server.
+
 ```powershell
 cd windows
 npm install
 npm run tauri dev      # live-reloading development build
+npm run sounds         # regenerates the 28 WAVs from scripts/gen-sounds.mjs
 npm run pack           # builds the app and drops the release files in windows/release/
 ```
 
@@ -90,24 +100,42 @@ to work on the island's looks. It also serves `dev/upload-preview.html`, which
 replays the whole file-drop choreography on a loop — the one part of the UI that
 otherwise needs a real drag from Explorer to see. Neither page ships in the app.
 
-`npm run pack` leaves these files in `windows/release/`, the same names the
-release workflow publishes:
+`npm run pack` leaves these in `windows/release/`:
 
 ```
-Montes-Windows-X.Y.Z-setup.exe    the versioned installer (NSIS)
-Montes-Windows-setup.exe          the same file under the rolling name
+Montes/                              the runnable folder, also zipped
+  Montes.exe                         the assistant
+  montes-hook.exe                    the relay it installs for Claude Code
+  WebView2Loader.dll                 the browser engine — keep it beside the exe
+  README.txt                         (in the zip only)
+Montes-Windows-X.Y.Z-portable.zip    the versioned archive
+Montes-Windows-portable.zip          the same file under the rolling name
 ```
 
-> **Note:** the NSIS installer is currently unpublished because Defender flags
-> it as `Trojan:Win32/Wacatac.H!ml` (a false positive). The supported
-> distribution is the portable build — `target/release/montes.exe` runs on its
-> own, no install needed.
+**There is no installer.** The original NSIS build tripped Defender with
+`Trojan:Win32/WacatacH!ml` — an unsigned installer unpacking its payload into
+temp looks exactly like a packer does — so `bundle.active` is false and the
+supported distribution is the folder you unzip and run. Nothing is installed:
+everything Montes writes lives in `%LOCALAPPDATA%\Montes` and `%APPDATA%\Montes`,
+so deleting those two folders and the program is gone. The `nsis` block stays in
+`tauri.conf.json` if you want the installer back.
+
+`WebView2Loader.dll` is not optional and not a build artefact to clean up. The
+GNU toolchain links it dynamically where MSVC links it statically, and without it
+the app exits with `STATUS_DLL_NOT_FOUND` (0xC0000135) before it can write a
+single log line. `pack.mjs` puts it in the folder and in the zip.
 
 ### Sounds
 
-The WAVs live in `windows/shared/sounds/` and are generated programmatically
-(WebAudio → WAV); the path is declared once, in `SOUNDS_DIR` at the top of
-`vite.config.ts`.
+The 28 WAVs live in `windows/shared/sounds/` and are synthesised from scratch by
+`scripts/gen-sounds.mjs` — additive synthesis in plain Node, no samples, no
+dependencies, no WebAudio. It runs on a seeded `mulberry32`, so the same run
+produces the same bytes. The path the app reads is declared once, in
+`SOUNDS_DIR` at the top of `vite.config.ts`.
+
+```powershell
+npm run sounds        # rewrites every WAV in windows/shared/sounds/
+```
 
 ### Icons
 
@@ -131,7 +159,7 @@ windows/
   src-tauri/           Rust backend: window, named pipe, Claude API, pollers
   hook/                montes-hook.exe, the Claude Code relay
   shared/sounds/       the generated WAVs
-  scripts/             icon generator, pack script
+  scripts/             icon generator, sound generator, pack script
 ```
 
 ### Log

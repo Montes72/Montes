@@ -503,9 +503,35 @@ fn install_relay(src: &Path, dest: &Path) {
     }
     // A hook may be running right now and hold the file open; keeping the old
     // copy is fine, it is the same relay.
-    if let Err(err) = std::fs::copy(src, dest) {
+    if let Err(err) = stage_and_replace(src, dest) {
         if !dest.exists() {
             crate::log::line(format!("could not install {}: {err}", platform::HOOK_EXE));
+        }
+    }
+}
+
+/// Copies through a neighbouring temporary file and moves it into place.
+///
+/// A plain `fs::copy` writes straight into the destination, so a Montes that is
+/// closed while it copies leaves Claude Code with a half-written relay: hooks
+/// then fail in a way that looks like Montes is simply not running. Rename is
+/// atomic on NTFS, so the file at `dest` is always a whole relay or still the
+/// previous one.
+#[cfg(windows)]
+fn stage_and_replace(src: &Path, dest: &Path) -> std::io::Result<()> {
+    let Some(dir) = dest.parent() else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "destination has no parent",
+        ));
+    };
+    let temp = dir.join("montes-hook.exe.new");
+    std::fs::copy(src, &temp)?;
+    match std::fs::rename(&temp, dest) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            let _ = std::fs::remove_file(&temp);
+            Err(err)
         }
     }
 }

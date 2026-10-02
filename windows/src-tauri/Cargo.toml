@@ -15,6 +15,17 @@ crate-type = ["rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+# `tauri build` passes this for anything it considers a production build, and the
+# tauri crate's own build script reads it to decide `cfg(dev)`: without it the
+# webviews keep pointing at the Vite dev server, so a plain `cargo build
+# --release` produces a binary that opens "localhost refused to connect" in both
+# windows. It must stay off for `tauri dev`, which is exactly what a default
+# feature would break — so release builds name it:
+#
+#   cargo build --release --features montes/custom-protocol -p montes -p montes-hook
+custom-protocol = ["tauri/custom-protocol"]
+
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-single-instance = "2"

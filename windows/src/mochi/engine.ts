@@ -71,6 +71,10 @@ const EYE_W = 0.27;
 const EYE_H = 0.29;
 const EYE_SP = 0.35;
 const EYE_P = -0.10;
+
+/** How often the engine may spawn an ambient particle: a z, a bead of sweat. */
+const AMBIENT_PERIOD = 1.3;
+
 const BASE_TOP: RGB = [0.929, 0.929, 0.937]; // #EDEDEF
 const BASE_BOTTOM: RGB = [0.769, 0.773, 0.792]; // #C4C5CA
 const INK = "rgb(26,20,18)"; // #1A1412
@@ -473,6 +477,28 @@ export class BotEngine {
     this.morph = 0;
   }
 
+  /**
+   * Seconds until the engine will want another frame even if nothing else wakes
+   * it: the next blink, the next idle glance, the next ambient particle. Zero
+   * when a tween or a particle is already running — then `busy` says the loop
+   * has no reason to stop.
+   *
+   * This exists because the frame loop parks itself the instant `busy` goes
+   * false, and every timer above is checked from inside `update()` — which only
+   * runs while the loop is awake. Left at that, the island freezes between
+   * events: nothing pulls it back, so a blink that fell due while parked never
+   * happened. The island asks this before it stops and sets a timer instead.
+   */
+  get idleWakeIn(): number {
+    if (this.tweens.size > 0 || this.particles.length > 0) return 0;
+    let due = this.nextBlink;
+    if (this.isMini) due = Math.min(due, this.miniLookNextTime);
+    if (this.cfg.zz || this.cfg.sweat) {
+      due = Math.min(due, this.lastAmbient + AMBIENT_PERIOD);
+    }
+    return Math.max(0, due - now());
+  }
+
   /** True while anything is still moving — lets the island stop its RAF loop. */
   get busy(): boolean {
     return (
@@ -608,7 +634,7 @@ export class BotEngine {
       this.ant = Math.sin(t * 3.4) * 0.5;
     }
 
-    if (n - this.lastAmbient > 1.3) {
+    if (n - this.lastAmbient > AMBIENT_PERIOD) {
       this.lastAmbient = n;
       if (this.cfg.zz) this.emit("z", 1);
       if (!this.isMini && this.cfg.sweat && Math.random() < 0.5) this.emit("sweat", 1);

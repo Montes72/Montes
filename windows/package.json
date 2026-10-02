@@ -5,13 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "sounds": "node scripts/gen-sounds.mjs",
+    "build": "npm run sounds && tsc --noEmit && vite build",
     "preview": "vite preview",
     "icons": "node scripts/gen-icons.mjs",
     "tauri": "tauri",
     "predev": "cargo build --release -p montes-hook",
     "prebuild": "cargo build --release -p montes-hook",
-    "pack": "tauri build && node scripts/pack.mjs"
+    "pack": "tauri build --no-bundle && node scripts/pack.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

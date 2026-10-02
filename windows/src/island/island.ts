@@ -82,6 +82,8 @@ export class Island {
 
   private running = false;
   private lastFrame = 0;
+  /** Set when a parked loop has arranged to wake itself; see `armWake`. */
+  private wakeTimer: number | null = null;
   private dirty = true;
   private canvasPx = 0;
 
@@ -762,6 +764,10 @@ export class Island {
   // ── Frame loop ──────────────────────────────────────────────────────────────
 
   ensureRunning() {
+    if (this.wakeTimer !== null) {
+      clearTimeout(this.wakeTimer);
+      this.wakeTimer = null;
+    }
     if (this.running) return;
     this.running = true;
     this.lastFrame = performance.now();
@@ -830,8 +836,34 @@ export class Island {
     } else {
       this.running = false;
       Sound.idle();
+      // Parking is the point — but "forever" was too far. Everything that makes
+      // the island look alive between events (blinks, idle glances, a sleeping
+      // z) is scheduled from inside the engine's update, which only runs while
+      // the loop is awake. So ask when it next wants a frame and set a timer for
+      // then. The floor matters: a blink that fell due on this very frame would
+      // otherwise ask for zero seconds and never be scheduled at all. A hidden
+      // island still asks for nothing — it must cost nothing.
+      const wait = State.mode === "hidden" ? 0 : Math.max(0.05, this.engine.idleWakeIn);
+      this.armWake(wait);
     }
   };
+
+  /**
+   * Schedules the loop to restart in `seconds`, replacing any pending wake.
+   * The 50 ms floor keeps a timer that fires a hair early from spinning the loop
+   * instead of letting the thing it was waiting for come due.
+   */
+  private armWake(seconds: number) {
+    if (this.wakeTimer !== null) {
+      clearTimeout(this.wakeTimer);
+      this.wakeTimer = null;
+    }
+    if (seconds <= 0) return;
+    this.wakeTimer = window.setTimeout(() => {
+      this.wakeTimer = null;
+      this.ensureRunning();
+    }, Math.max(0.05, seconds) * 1000);
+  }
 
   private updateBotTargets() {
     const p = botPosition(State.mode, State.view, this.height.value, State.uploadProgress);
