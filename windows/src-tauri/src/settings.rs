@@ -4,6 +4,22 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// An extra agent wired to the same `montes-hook` relay. Each one owns a JSON
+/// hook config of its own (`path`) and the events it should report; Montes writes
+/// `montes-hook.exe --agent <name> <Event>` into it, with the same backup/diff
+/// flow as the Claude Code hooks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Agent {
+    /// `^[a-z0-9-]{1,24}$`, never "claude" (that pill is taken).
+    pub name: String,
+    /// Full path to the tool's JSON hook config.
+    pub path: String,
+    /// Which HOOK_EVENTS to install for this agent.
+    #[serde(default)]
+    pub events: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
@@ -20,6 +36,9 @@ pub struct Settings {
     /// Defaulted explicitly so a settings.json written by an older build still loads.
     #[serde(default = "default_model")]
     pub model: String,
+    /// Extra agents wired to the relay (see `Agent`). Empty for a fresh install.
+    #[serde(default)]
+    pub agents: Vec<Agent>,
 }
 
 fn default_model() -> String {
@@ -43,6 +62,7 @@ impl Default for Settings {
             autostart: false,
             hooks_installed: false,
             model: default_model(),
+            agents: Vec::new(),
         }
     }
 }

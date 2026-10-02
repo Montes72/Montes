@@ -32,6 +32,15 @@ hands it to Montes over the pipe `\\.\pipe\montes-<user-SID>`. If Montes is not
 running it exits immediately with nothing on stdout — Claude Code is never
 blocked.
 
+## Easy path: Settings → Agents
+
+You do not have to edit the file by hand. **Settings… → Agents** takes the
+agent's name, the full path to its own JSON hook config and the events it should
+report, then writes `"<…>\montes-hook.exe" --agent <name> <Event>` into that
+file. It shows the diff first and takes a dated backup; uninstalling removes only
+that agent's entries and never touches anybody else's hooks in the file. The
+same caveats as above apply — an absolute path, and no `PermissionRequest`.
+
 ## Payload format
 
 The relay adds `montes_agent` to the JSON it forwards to the island. You can

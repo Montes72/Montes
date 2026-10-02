@@ -46,15 +46,17 @@ never blocked or slowed down by Montes.** If nobody answers a permission request
 in time, Montes stays quiet and Claude Code asks in the terminal as usual.
 
 It works from any terminal — Windows Terminal, PowerShell, VS Code, Git Bash.
-The relay accepts a `montes_agent` protocol field so any agent can get its own
+The relay accepts a `montes_agent` protocol field so any tool can get its own
 pill (see [`docs/AGENTS.md`](../docs/AGENTS.md)).
 
-## Агенты (extra agents)
+## Agents
 
-**Settings… → Агенты** lets you add extra agents with their own name and the
-hook events that should show them. Saving merges them into
-`~/.claude/settings.json` with `--agent <name>`, exactly like the Claude Code
-section.
+**Settings… → Agents** wires any tool that can run a hook command to the same
+relay. Add the agent's name, the full path to its own JSON hook config (for
+example `%USERPROFILE%\.gemini\settings.json`) and the events it should report;
+Montes writes `montes-hook.exe --agent <name> <Event>` into that file with the
+same dated backup and diff as the Claude Code section. Each agent gets its own
+pill, and `PermissionRequest` is left out — approvals only work for Claude Code.
 
 ## Chat and keys
 
@@ -138,6 +140,7 @@ problems. It stays on your machine.
 - Jumping to a specific terminal window — "Open terminal" opens the working
   folder in VS Code when `code` is on your `PATH`.
 - Gemini CLI / Antigravity / Cursor / Codex pills and Google AI / OpenAI chat —
-  macOS-only in the original and dropped in the fork.
+  macOS-only in the original and dropped in the fork. Those tools can still be
+  wired by hand through **Settings… → Agents**.
 - Speech, window capture and the drag-onto-window flow are scheduled for the
   Montes milestones (see the plan).

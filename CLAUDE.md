@@ -8,9 +8,10 @@ answer, chat and drop files without leaving what they're doing.
 ## Where things are
 - `windows/src-tauri/` — the Rust backend: the transparent island window
   (`platform/windows.rs`), the named pipe and approval flow (`pipe.rs`), the
-  Claude Code hooks manager (`hooks.rs`), the Claude chat (`claude.rs`), the
-  seven service pollers (`integrations.rs`), files inbox/ingest (`files.rs`),
-  secrets in the Windows Credential Manager (`secrets.rs`).
+  Claude Code hooks manager and the extra-agent installer (`hooks.rs`), the
+  Claude chat (`claude.rs`), the seven service pollers (`integrations.rs`),
+  files inbox/ingest (`files.rs`), secrets in the Windows Credential Manager
+  (`secrets.rs`).
 - `windows/hook/` — `montes-hook.exe`, the tiny relay Claude Code runs on every
   hook event. Never blocks Claude Code.
 - `windows/src/` — the front end (TypeScript, no framework):
@@ -22,8 +23,8 @@ answer, chat and drop files without leaving what they're doing.
   `windows/vite.config.ts`.
 - `windows/scripts/` — `gen-icons.mjs` (draws the app/tray icons), `pack.mjs`
   (copies Tauri's bundles into `windows/release/` with release names).
-- `docs/SPEC.md`, `docs/INTEGRATIONS.md`, `docs/AGENTS.md` — the original
-  specifications (French, describing the original macOS app) kept as reference.
+- `docs/SPEC.md`, `docs/INTEGRATIONS.md` — the original specifications (French,
+  describing the original macOS app) kept as reference.
 - `docs/AGENTS.md` — the `montes-hook` relay and the agent protocol.
 
 ## Build
@@ -43,8 +44,9 @@ npm run pack           # portable zip + exe in windows/release/
 - No telemetry. Network calls only to services the user configured.
 - Never block Claude Code: if the app doesn't answer within its deadline, the
   hook exits immediately and the terminal takes over.
-- Never overwrite `~/.claude/settings.json`: dated backup, merge, show the
-  diff, write only after the user confirms.
+- Never overwrite a hook config: dated backup, merge, show the diff, write only
+  after the user confirms. This covers `~/.claude/settings.json` and each agent
+  config registered in **Settings… → Agents**.
 - Never send an email or approve a Claude Code permission without an explicit
   click.
 - Performance: 0 % CPU when the island is hidden. Pollers pause when nothing

@@ -4,7 +4,7 @@
 
 import "./settings.css";
 import { Bridge, onEvent, type HookStatus } from "../core/bridge";
-import { DEFAULT_SETTINGS, type Settings } from "../core/state";
+import { DEFAULT_SETTINGS, type Agent, type Settings } from "../core/state";
 import { h, clear } from "../views/dom";
 
 let settings: Settings = { ...DEFAULT_SETTINGS };
@@ -168,6 +168,231 @@ function claudeSection(status: HookStatus): HTMLElement {
   }
 
   draw();
+  return section;
+}
+
+// ── Agents section ────────────────────────────────────────────────────────────
+//
+// Extra agents share the Claude Code relay: each one gets its own JSON hook
+// config — any tool whose hooks can run `montes-hook.exe --agent <name> <Event>`
+// shows up as its own pill. Writing follows the same contract as the Claude
+// hooks: dated backup, diff, explicit click, fingerprint.
+
+const AGENT_NAME_RE = /^[a-z0-9-]{1,24}$/;
+const AGENT_DEFAULT_EVENTS = [
+  "SessionStart", "UserPromptSubmit", "PreToolUse",
+  "PostToolUse", "Stop", "SessionEnd",
+];
+
+function agentsSection(): HTMLElement {
+  const body = h("div", { style: "display:flex;flex-direction:column;gap:12px" });
+  const section = h("section", {}, h("h2", {}, h("span", { text: "Agents" })), body);
+  let eventNames: string[] = [];
+
+  async function draw() {
+    clear(body);
+    if (eventNames.length === 0) eventNames = (await Bridge.agentEvents()) ?? [];
+
+    body.append(h("div", {
+      class: "hint",
+      text: "Points any tool that can run a hook command at the montes-hook relay. Each agent gets its own pill: Montes writes “montes-hook.exe --agent <name> <Event>” into the tool's own JSON hook config, with the same backup and diff as the Claude Code hooks.",
+    }));
+    if (eventNames.length === 0) {
+      body.append(h("div", {
+        class: "notice warn",
+        text: "The relay isn't in place yet. Restart Montes; if it still fails, build it with `cargo build -p montes-hook`.",
+      }));
+    }
+
+    for (const agent of settings.agents) body.append(agentCard(agent));
+    body.append(addForm());
+  }
+
+  function eventPicker(chosen: Set<string>, onChange: (event: string, on: boolean) => void): HTMLElement {
+    const box = h("div", { style: "display:flex;flex-wrap:wrap;gap:10px 14px" });
+    for (const name of eventNames) {
+      const cb = h("input", { type: "checkbox" }) as HTMLInputElement;
+      cb.checked = chosen.has(name);
+      cb.addEventListener("change", () => onChange(name, cb.checked));
+      box.append(h("label", { style: "display:flex;align-items:center;gap:5px;font-size:12px" },
+        cb, h("span", { text: name })));
+    }
+    return box;
+  }
+
+  function agentCard(agent: Agent): HTMLElement {
+    const dot = statusDot(false);
+    const statusText = h("span", { class: "hint", text: "Checking…" });
+    const install = h("button", { class: "primary", text: "Install…" });
+    const uninstall = h("button", { class: "danger", text: "Uninstall…" });
+    const remove = h("button", { class: "danger", text: "Delete" });
+    let installed = false;
+
+    const path = h("input", {
+      type: "text", spellcheck: "false", autocomplete: "off",
+      style: "flex:1 1 auto;min-width:0",
+    }) as HTMLInputElement;
+    path.value = agent.path;
+    path.addEventListener("change", () => {
+      agent.path = path.value.trim();
+      void save();
+      void refreshStatus();
+    });
+
+    const wrap = h("div", {
+      style: "display:flex;flex-direction:column;gap:8px;padding:10px 0;border-top:1px solid rgba(255,255,255,.08)",
+    },
+      h("div", { style: "display:flex;align-items:center;gap:8px" }, dot,
+        h("span", { style: "font-weight:600", text: agent.name })),
+      h("div", { class: "row" }, h("label", { text: "Config" }), path),
+      h("div", { class: "hint", text: "Events" }),
+      eventPicker(new Set(agent.events), (name, on) => {
+        agent.events = on
+          ? [...agent.events.filter((e) => e !== name), name]
+          : agent.events.filter((e) => e !== name);
+        void save();
+      }),
+      h("div", { class: "row" }, install, uninstall, remove),
+      statusText,
+    );
+
+    async function refreshStatus() {
+      const status = await Bridge.agentStatus(agent);
+      installed = status?.installed ?? false;
+      dot.style.background = installed ? "#22c55e" : "#f4505e";
+      statusText.textContent = installed
+        ? `Hooked into ${status?.settingsPath || agent.path}.`
+        : "No hooks installed for this agent yet.";
+      uninstall.style.display = installed ? "" : "none";
+      install.textContent = installed ? "Reinstall…" : "Install…";
+    }
+    void refreshStatus();
+
+    install.addEventListener("click", () => void showPreview(agent, true));
+    uninstall.addEventListener("click", () => void showPreview(agent, false));
+    remove.addEventListener("click", async () => {
+      if (installed) {
+        // Never leave hooks behind in a file nobody can reach any more.
+        await showPreview(agent, false, () => {
+          settings.agents = settings.agents.filter((a) => a !== agent);
+        });
+        return;
+      }
+      settings.agents = settings.agents.filter((a) => a !== agent);
+      await save();
+      void draw();
+    });
+    return wrap;
+  }
+
+  function addForm(): HTMLElement {
+    const name = h("input", {
+      type: "text", placeholder: "my-agent", spellcheck: "false", autocomplete: "off",
+      style: "flex:1 1 auto;min-width:0",
+    }) as HTMLInputElement;
+    const path = h("input", {
+      type: "text", placeholder: "C:\\Users\\you\\.gemini\\settings.json",
+      spellcheck: "false", autocomplete: "off", style: "flex:1 1 auto;min-width:0",
+    }) as HTMLInputElement;
+    const chosen = new Set(AGENT_DEFAULT_EVENTS.filter((e) => eventNames.includes(e)));
+    const error = h("div", {});
+    const add = h("button", { class: "primary", text: "Add agent" });
+
+    add.addEventListener("click", async () => {
+      clear(error);
+      const n = name.value.trim();
+      if (!AGENT_NAME_RE.test(n)) {
+        error.append(h("div", { class: "notice err", text: "Use 1–24 lowercase letters, digits or hyphens." }));
+        return;
+      }
+      if (n === "claude") {
+        error.append(h("div", { class: "notice err", text: "“claude” is reserved for the Claude Code pill." }));
+        return;
+      }
+      if (settings.agents.some((a) => a.name === n)) {
+        error.append(h("div", { class: "notice err", text: "That name is already used." }));
+        return;
+      }
+      const p = path.value.trim();
+      if (!p) {
+        error.append(h("div", { class: "notice err", text: "Give the full path to the tool's JSON hook config." }));
+        return;
+      }
+      settings.agents = [...settings.agents, { name: n, path: p, events: [...chosen] }];
+      await save();
+      void draw();
+    });
+
+    return h("div", {
+      style: "display:flex;flex-direction:column;gap:8px;padding-top:10px;border-top:1px solid rgba(255,255,255,.08)",
+    },
+      h("div", { class: "hint", text: "Add an agent" }),
+      h("div", { class: "row" }, h("label", { text: "Name" }), name),
+      h("div", { class: "row" }, h("label", { text: "Config" }), path),
+      eventPicker(chosen, (event, on) => {
+        if (on) chosen.add(event); else chosen.delete(event);
+      }),
+      h("div", { class: "row" }, add),
+      error,
+    );
+  }
+
+  async function showPreview(agent: Agent, install: boolean, onDone?: () => void) {
+    let preview;
+    try {
+      preview = await Bridge.agentPreview(agent, install);
+    } catch (err) {
+      clear(body);
+      body.append(
+        h("div", { class: "notice err", text: String(err).replace(/^Error:\s*/, "") }),
+        h("div", { class: "row" }, h("button", {
+          text: "Back", onclick: () => { clear(body); void draw(); },
+        })),
+      );
+      return;
+    }
+    clear(body);
+    body.append(
+      h("div", {
+        class: "hint",
+        text: install
+          ? `This is exactly what will change in ${preview.settingsPath}. Other hooks in that file are left untouched.`
+          : `This removes ${agent.name}'s entries only. Other hooks are left untouched.`,
+      }),
+      renderDiff(preview.diff),
+      h("div", { class: "row" }, h("span", { class: "path", text: `Backup → ${preview.backup}` })),
+    );
+    const confirm = h("button", {
+      class: install ? "primary" : "danger",
+      text: install ? "Back up and write" : "Back up and remove",
+    });
+    confirm.addEventListener("click", async () => {
+      confirm.disabled = true;
+      try {
+        const backup = await Bridge.agentApply(agent, install, preview.fingerprint);
+        clear(body);
+        body.append(h("div", {
+          class: "notice ok",
+          text: install
+            ? `Done. Previous settings saved as ${backup}. Start a new ${agent.name} session to pick the hooks up.`
+            : `Done. Previous settings saved as ${backup}.`,
+        }));
+        if (onDone) {
+          onDone();
+          await save();
+        }
+        window.setTimeout(() => { clear(body); void draw(); }, 2600);
+      } catch (err) {
+        confirm.disabled = false;
+        body.append(h("div", { class: "notice err", text: `Could not write: ${String(err)}` }));
+      }
+    });
+    body.append(h("div", { class: "row" }, confirm, h("button", {
+      text: "Cancel", onclick: () => { clear(body); void draw(); },
+    })));
+  }
+
+  void draw();
   return section;
 }
 
@@ -442,6 +667,7 @@ async function main() {
   root.append(
     h("h1", {}, h("span", { text: "Montes" }), h("span", { class: "version", text: version })),
     claudeSection(status),
+    agentsSection(),
     apiSection(hasKey),
     integrationsSection(present),
     generalSection(),

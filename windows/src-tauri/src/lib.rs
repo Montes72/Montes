@@ -216,6 +216,49 @@ fn approval_decision(app: AppHandle, request_id: String, decision: String) {
     pipe::answer(&app, &request_id, &decision);
 }
 
+// ── Extra agents ──────────────────────────────────────────────────────────────
+
+/// The events an agent may subscribe to (all but `PermissionRequest`).
+#[tauri::command]
+fn agent_events() -> Vec<&'static str> {
+    hooks::agent_events()
+}
+
+#[tauri::command]
+fn agent_status(agent: settings::Agent) -> HookStatus {
+    hooks::agent_status(&agent)
+}
+
+#[tauri::command]
+fn agent_preview(agent: settings::Agent, install: bool) -> Result<HookPreview, String> {
+    hooks::agent_preview(&agent, install)
+}
+
+/// Writes one agent's hooks into its own config file, after an explicit click,
+/// and only when that file still matches the diff the user looked at. The agent
+/// is upserted into the saved settings so its declared events survive.
+#[tauri::command]
+fn agent_apply(
+    app: AppHandle,
+    shared: State<Shared>,
+    agent: settings::Agent,
+    install: bool,
+    fingerprint: String,
+) -> Result<String, String> {
+    let backup = hooks::agent_write(&agent, install, &fingerprint)?;
+    let updated = {
+        let mut current = shared.settings.lock().unwrap();
+        match current.agents.iter_mut().find(|a| a.name == agent.name) {
+            Some(slot) => *slot = agent.clone(),
+            None => current.agents.push(agent.clone()),
+        }
+        let _ = settings::save(&current);
+        current.clone()
+    };
+    let _ = app.emit("settings-changed", updated);
+    Ok(backup)
+}
+
 /// The island has the card on screen, so the long wait for a human may begin.
 /// Until this arrives the relay only waits a few hundred milliseconds, which is
 /// what stops a paused or unresponsive island from freezing Claude Code.
@@ -387,6 +430,10 @@ pub fn run() {
             hooks_status,
             hooks_preview,
             hooks_apply,
+            agent_events,
+            agent_status,
+            agent_preview,
+            agent_apply,
             approval_decision,
             approval_ack,
             approval_decline,

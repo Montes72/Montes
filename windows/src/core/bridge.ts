@@ -5,7 +5,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import type { Settings } from "./state";
+import type { Agent, Settings } from "./state";
 
 export const IS_TAURI =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -72,6 +72,15 @@ export const Bridge = {
    */
   hooksApply: (install: boolean, fingerprint: string) =>
     callOrThrow<string>("hooks_apply", { install, fingerprint }),
+
+  // ── Extra agents ──────────────────────────────────────────────────────────
+  /** The events an agent may report (all but PermissionRequest). */
+  agentEvents: () => call<string[]>("agent_events"),
+  agentStatus: (agent: Agent) => call<HookStatus>("agent_status", { agent }),
+  agentPreview: (agent: Agent, install: boolean) =>
+    callOrThrow<HookPreview>("agent_preview", { agent, install }),
+  agentApply: (agent: Agent, install: boolean, fingerprint: string) =>
+    callOrThrow<string>("agent_apply", { agent, install, fingerprint }),
 
   approvalDecision: (requestId: string, decision: "allow" | "deny") =>
     call<void>("approval_decision", { requestId, decision }),

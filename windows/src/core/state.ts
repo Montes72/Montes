@@ -92,6 +92,18 @@ export interface Settings {
   hooksInstalled: boolean;
   /** Claude model used by the chat. */
   model: string;
+  /** Extra agents wired to the montes-hook relay (see docs/AGENTS.md). */
+  agents: Agent[];
+}
+
+/** One extra agent: a name, its own JSON hook config, and the events it reports. */
+export interface Agent {
+  /** `^[a-z0-9-]{1,24}$`, never "claude" (that pill is taken). */
+  name: string;
+  /** Full path to the tool's JSON hook config. */
+  path: string;
+  /** Which hook events to install for this agent. */
+  events: string[];
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -106,6 +118,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autostart: false,
   hooksInstalled: false,
   model: "claude-opus-5",
+  agents: [],
 };
 
 type Listener = () => void;

@@ -33,6 +33,17 @@ pub const HOOK_EVENTS: &[(&str, u64)] = &[
     ("SubagentStop", 10),
 ];
 
+/// The events a third-party agent may report. `PermissionRequest` is left out:
+/// approval cards only work for Claude Code — an external agent's request is
+/// answered immediately with no decision and it re-asks in its terminal.
+pub fn agent_events() -> Vec<&'static str> {
+    HOOK_EVENTS
+        .iter()
+        .filter(|(event, _)| *event != "PermissionRequest")
+        .map(|(event, _)| *event)
+        .collect()
+}
+
 /// Marker that identifies a Montes entry inside settings.json.
 const MARKER: &str = "montes-hook";
 
@@ -66,9 +77,8 @@ pub fn settings_path() -> PathBuf {
 /// Everything else — a lock held by another process, a permission problem, JSON
 /// we cannot parse — is reported, because the alternative is treating somebody's
 /// unreadable settings as an empty object and then writing that back over them.
-fn read_settings() -> Result<Value, String> {
-    let path = settings_path();
-    match std::fs::read(&path) {
+fn read_settings_at(path: &Path) -> Result<Value, String> {
+    match std::fs::read(path) {
         Ok(bytes) => parse_settings(&bytes, &path.display().to_string()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(json!({})),
         // A lock, a permission problem, a bad drive: all of them mean we do not
@@ -77,8 +87,8 @@ fn read_settings() -> Result<Value, String> {
     }
 }
 
-/// The parsing half of `read_settings`, split out so it can be tested without a
-/// home directory.
+/// The parsing half of `read_settings_at`, split out so it can be tested without
+/// a home directory.
 fn parse_settings(bytes: &[u8], path: &str) -> Result<Value, String> {
     // PowerShell writes a UTF-8 BOM with `Set-Content -Encoding utf8`, and
     // serde_json refuses it. Stripping it is safe and well defined; guessing at
@@ -98,17 +108,37 @@ fn parse_settings(bytes: &[u8], path: &str) -> Result<Value, String> {
 
 /// The settings as they are, or an empty object when we cannot tell. Only for
 /// read-only paths like `status()`, which must never fail loudly; anything that
-/// writes uses `read_settings()` and surfaces the error instead.
-fn read_settings_lossy() -> Value {
-    read_settings().unwrap_or_else(|_| json!({}))
+/// writes uses `read_settings_at()` and surfaces the error instead.
+fn read_settings_lossy_at(path: &Path) -> Value {
+    read_settings_at(path).unwrap_or_else(|_| json!({}))
 }
 
-fn hook_command(event: &str) -> String {
+fn hook_command(event: &str, agent: Option<&str>) -> String {
     let exe = settings::hook_exe_path().to_string_lossy().replace('\\', "/");
-    format!("\"{exe}\" {event}")
+    match agent {
+        // The relay tags the payload with `montes_agent`, so the island routes
+        // the event to this agent's own pill instead of Claude Code's.
+        Some(name) => format!("\"{exe}\" --agent {name} {event}"),
+        None => format!("\"{exe}\" {event}"),
+    }
 }
 
-fn entry_is_ours(entry: &Value) -> bool {
+/// True when a hook command is a Montes relay command of the given kind:
+/// Claude Code's own set (`agent = None`) or one named agent's set.
+///
+/// The agent test keeps the trailing space, so `--agent foo` does not also match
+/// `--agent foobar`.
+fn command_is_ours(command: &str, agent: Option<&str>) -> bool {
+    if !command.contains(MARKER) {
+        return false;
+    }
+    match agent {
+        None => !command.contains("--agent "),
+        Some(name) => command.contains(&format!("--agent {name} ")),
+    }
+}
+
+fn entry_is_ours(entry: &Value, agent: Option<&str>) -> bool {
     entry
         .get("hooks")
         .and_then(Value::as_array)
@@ -116,15 +146,19 @@ fn entry_is_ours(entry: &Value) -> bool {
             hooks.iter().any(|h| {
                 h.get("command")
                     .and_then(Value::as_str)
-                    .map(|c| c.contains(MARKER))
+                    .map(|c| command_is_ours(c, agent))
                     .unwrap_or(false)
             })
         })
         .unwrap_or(false)
 }
 
-/// Settings with Montes's hooks added; everything else is left untouched.
-fn merged(existing: &Value) -> Value {
+/// Settings with this kind's hooks added; everything else is left untouched.
+///
+/// `install` lists the events to write. Entries of this kind on any *other*
+/// event are removed, so re-installing after unticking an event cleans it up,
+/// and entries left by an older install are cleared too.
+fn merged_at(existing: &Value, agent: Option<&str>, install: &[&str]) -> Value {
     let mut root = existing.as_object().cloned().unwrap_or_default();
     let mut hooks = root
         .get("hooks")
@@ -138,23 +172,29 @@ fn merged(existing: &Value) -> Value {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        list.retain(|entry| !entry_is_ours(entry));
-        list.push(json!({
-            "hooks": [{
-                "type": "command",
-                "command": hook_command(event),
-                "timeout": timeout,
-            }]
-        }));
-        hooks.insert((*event).to_string(), Value::Array(list));
+        list.retain(|entry| !entry_is_ours(entry, agent));
+        if install.contains(event) {
+            list.push(json!({
+                "hooks": [{
+                    "type": "command",
+                    "command": hook_command(event, agent),
+                    "timeout": timeout,
+                }]
+            }));
+        }
+        if list.is_empty() {
+            hooks.remove(*event);
+        } else {
+            hooks.insert((*event).to_string(), Value::Array(list));
+        }
     }
 
     root.insert("hooks".into(), Value::Object(hooks));
     Value::Object(root)
 }
 
-/// Settings with every Montes entry removed, and nothing else changed.
-fn without_ours(existing: &Value) -> Value {
+/// Settings with this kind's entries removed, and nothing else changed.
+fn without_ours_at(existing: &Value, agent: Option<&str>) -> Value {
     let mut root = existing.as_object().cloned().unwrap_or_default();
     let Some(hooks) = root.get("hooks").and_then(Value::as_object).cloned() else {
         return Value::Object(root);
@@ -164,7 +204,7 @@ fn without_ours(existing: &Value) -> Value {
         match value.as_array() {
             Some(list) => {
                 let kept: Vec<Value> =
-                    list.iter().filter(|e| !entry_is_ours(e)).cloned().collect();
+                    list.iter().filter(|e| !entry_is_ours(e, agent)).cloned().collect();
                 if !kept.is_empty() {
                     out.insert(event, Value::Array(kept));
                 }
@@ -196,9 +236,10 @@ fn stamp() -> String {
     )
 }
 
-fn backup_path() -> PathBuf {
-    let p = settings_path();
-    p.with_file_name(format!("settings.json.bak-{}", stamp()))
+/// A dated backup beside the target, keeping its own file name.
+fn backup_path_at(path: &Path) -> PathBuf {
+    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("settings.json");
+    path.with_file_name(format!("{name}.bak-{}", stamp()))
 }
 
 /// Identifies the exact bytes a preview was computed from. FNV-1a is plenty:
@@ -212,8 +253,8 @@ fn fingerprint(bytes: &[u8]) -> String {
     format!("{hash:016x}")
 }
 
-fn current_fingerprint() -> String {
-    match std::fs::read(settings_path()) {
+fn current_fingerprint_at(path: &Path) -> String {
+    match std::fs::read(path) {
         Ok(bytes) => fingerprint(&bytes),
         Err(_) => fingerprint(b""),
     }
@@ -221,8 +262,8 @@ fn current_fingerprint() -> String {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-pub fn status() -> HookStatus {
-    let current = read_settings_lossy();
+fn status_at(path: &Path, agent: Option<&str>) -> HookStatus {
+    let current = read_settings_lossy_at(path);
     let installed = current
         .get("hooks")
         .and_then(Value::as_object)
@@ -231,27 +272,97 @@ pub fn status() -> HookStatus {
                 .values()
                 .filter_map(Value::as_array)
                 .flatten()
-                .any(entry_is_ours)
+                .any(|entry| entry_is_ours(entry, agent))
         })
         .unwrap_or(false);
     let hook_path = settings::hook_exe_path();
     HookStatus {
         installed,
-        settings_path: settings_path().to_string_lossy().to_string(),
+        settings_path: path.to_string_lossy().to_string(),
         hook_ready: hook_path.exists(),
         hook_path: hook_path.to_string_lossy().to_string(),
     }
 }
 
-pub fn preview(install: bool) -> Result<HookPreview, String> {
-    let current = read_settings()?;
-    let next = if install { merged(&current) } else { without_ours(&current) };
+pub fn status() -> HookStatus {
+    status_at(&settings_path(), None)
+}
+
+/// The events Claude Code gets: all of them.
+fn claude_events() -> Vec<&'static str> {
+    HOOK_EVENTS.iter().map(|(event, _)| *event).collect()
+}
+
+/// The target file of an agent install, validated: a real agent name and an
+/// absolute path. A relative path would resolve against the app's working
+/// directory and write somewhere nobody can find again.
+fn agent_config_path(agent: &crate::settings::Agent) -> Result<std::path::PathBuf, String> {
+    let name = agent.name.trim();
+    let name_ok = !name.is_empty()
+        && name.len() <= 24
+        && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if !name_ok {
+        return Err("The agent name must be 1–24 characters of a–z, 0–9 and -.".into());
+    }
+    if name == "claude" {
+        return Err("\"claude\" is reserved for the Claude Code pill.".into());
+    }
+    let raw = agent.path.trim();
+    let path = std::path::PathBuf::from(raw);
+    if raw.is_empty() || !path.is_absolute() {
+        return Err("Give the full path to the tool's JSON hook config.".into());
+    }
+    Ok(path)
+}
+
+fn preview_at(
+    path: &Path,
+    agent: Option<&str>,
+    install_events: &[&str],
+    install: bool,
+) -> Result<HookPreview, String> {
+    let current = read_settings_at(path)?;
+    let next = if install {
+        merged_at(&current, agent, install_events)
+    } else {
+        without_ours_at(&current, agent)
+    };
     Ok(HookPreview {
         diff: unified_diff(&pretty(&current), &pretty(&next)),
-        backup: backup_path().to_string_lossy().to_string(),
-        settings_path: settings_path().to_string_lossy().to_string(),
-        fingerprint: current_fingerprint(),
+        backup: backup_path_at(path).to_string_lossy().to_string(),
+        settings_path: path.to_string_lossy().to_string(),
+        fingerprint: current_fingerprint_at(path),
     })
+}
+
+pub fn preview(install: bool) -> Result<HookPreview, String> {
+    preview_at(&settings_path(), None, &claude_events(), install)
+}
+
+/// Preview of what installing (or removing) one agent's hooks would change in
+/// that agent's own config file.
+pub fn agent_preview(
+    agent: &crate::settings::Agent,
+    install: bool,
+) -> Result<HookPreview, String> {
+    let path = agent_config_path(agent)?;
+    let events: Vec<&str> = agent.events.iter().map(String::as_str).collect();
+    preview_at(&path, Some(&agent.name), &events, install)
+}
+
+/// Status of one agent's entries in its own config file.
+pub fn agent_status(agent: &crate::settings::Agent) -> HookStatus {
+    match agent_config_path(agent) {
+        Ok(path) => status_at(&path, Some(&agent.name)),
+        // An invalid entry reads as "not installed", so the UI can still show it
+        // and let the user fix the name or the path.
+        Err(_) => HookStatus {
+            installed: false,
+            settings_path: agent.path.clone(),
+            hook_path: settings::hook_exe_path().to_string_lossy().to_string(),
+            hook_ready: settings::hook_exe_path().exists(),
+        },
+    }
 }
 
 /// Writes the merged (or cleaned) settings after taking a dated backup.
@@ -260,42 +371,66 @@ pub fn preview(install: bool) -> Result<HookPreview, String> {
 /// in between — another tool, another window, the user's own editor — we stop
 /// and make them look at a fresh diff, because the only thing worse than not
 /// installing the hooks is silently reverting somebody else's edit.
-pub fn write(install: bool, fingerprint: &str) -> Result<String, String> {
-    let path = settings_path();
+fn write_at(
+    path: &Path,
+    agent: Option<&str>,
+    install_events: &[&str],
+    install: bool,
+    fingerprint: &str,
+) -> Result<String, String> {
     let dir = path.parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
 
     // Read before the backup: an unreadable file must abort before we touch
     // anything at all.
-    let current = read_settings()?;
-    if current_fingerprint() != fingerprint {
+    let current = read_settings_at(path)?;
+    if current_fingerprint_at(path) != fingerprint {
         return Err(format!(
             "{} changed since the preview. Nothing was written — review the new diff.",
             path.display()
         ));
     }
 
-    let backup = backup_path();
+    let backup = backup_path_at(path);
     if path.exists() {
-        std::fs::copy(&path, &backup).map_err(|e| format!("backup failed: {e}"))?;
+        std::fs::copy(path, &backup).map_err(|e| format!("backup failed: {e}"))?;
     }
 
-    let next = if install { merged(&current) } else { without_ours(&current) };
+    let next = if install {
+        merged_at(&current, agent, install_events)
+    } else {
+        without_ours_at(&current, agent)
+    };
     let mut text = pretty(&next);
     text.push('\n');
 
     // Write beside the target and rename over it: a crash or a full disk leaves
     // the original settings.json intact rather than half a file.
     let temp = path.with_extension(format!("json.montes-{}", std::process::id()));
-    if let Err(err) = write_like(&temp, &path, text.as_bytes()) {
+    if let Err(err) = write_like(&temp, path, text.as_bytes()) {
         let _ = std::fs::remove_file(&temp);
         return Err(format!("write failed: {err}"));
     }
-    if let Err(err) = std::fs::rename(&temp, &path) {
+    if let Err(err) = std::fs::rename(&temp, path) {
         let _ = std::fs::remove_file(&temp);
         return Err(format!("write failed: {err}"));
     }
     Ok(backup.to_string_lossy().to_string())
+}
+
+pub fn write(install: bool, fingerprint: &str) -> Result<String, String> {
+    write_at(&settings_path(), None, &claude_events(), install, fingerprint)
+}
+
+/// Installs (or removes) one agent's hooks in its own config file.
+pub fn agent_write(
+    agent: &crate::settings::Agent,
+    install: bool,
+    fingerprint: &str,
+) -> Result<String, String> {
+    let path = agent_config_path(agent)?;
+    let events: Vec<&str> = agent.events.iter().map(String::as_str).collect();
+    write_at(&path, Some(&agent.name), &events, install, fingerprint)
 }
 
 /// Writes `bytes` to `temp`, which is about to replace `original`. (The
@@ -468,8 +603,8 @@ mod tests {
 
     #[test]
     fn unreadable_content_is_an_error_never_an_empty_object() {
-        // This is the whole bug: returning {} here meant `merged()` produced a
-        // file containing nothing but Montes's hooks, and the write replaced
+        // This is the whole bug: returning {} here meant `merged_at()` produced
+        // a file containing nothing but Montes's hooks, and the write replaced
         // everything the user had.
         for bad in [&b"{ not json"[..], &b"[1,2,3]"[..], &b"\"a string\""[..]] {
             assert!(
@@ -502,7 +637,7 @@ mod tests {
             }
         });
 
-        let after = merged(&existing);
+        let after = merged_at(&existing, None, &claude_events());
         assert_eq!(after["model"], "claude-opus-5");
         assert_eq!(after["theme"], "dark");
         assert_eq!(after["enabledPlugins"], serde_json::json!(["a", "b"]));
@@ -512,12 +647,66 @@ mod tests {
             pre.iter().any(|e| serde_json::to_string(e).unwrap().contains("someone-elses-tool.exe")),
             "another tool's hook was dropped"
         );
-        assert!(pre.iter().any(entry_is_ours), "our own hook was not added");
+        assert!(pre.iter().any(|e| entry_is_ours(e, None)), "our own hook was not added");
         assert!(after["hooks"]["SomeEventWeDoNotTouch"].is_array());
 
         // And removing ours puts it back exactly as it was.
-        let cleaned = without_ours(&after);
+        let cleaned = without_ours_at(&after, None);
         assert_eq!(cleaned, existing);
+    }
+
+    #[test]
+    fn an_agents_hooks_never_collide_with_claudes_or_with_each_other() {
+        let existing = serde_json::json!({
+            "hooks": {
+                "PreToolUse": [
+                    { "hooks": [{ "type": "command", "command": "other.exe" }] }
+                ]
+            }
+        });
+
+        // Claude's set, then two agents, all in the same file.
+        let with_claude = merged_at(&existing, None, &claude_events());
+        let with_foo = merged_at(&with_claude, Some("foo"), &["PreToolUse", "Stop"]);
+        let with_foobar = merged_at(&with_foo, Some("foobar"), &["PreToolUse"]);
+
+        let pre = with_foobar["hooks"]["PreToolUse"].as_array().unwrap();
+        assert!(pre.iter().any(|e| entry_is_ours(e, None)), "Claude's hook is gone");
+        assert!(pre.iter().any(|e| entry_is_ours(e, Some("foo"))), "foo's hook is gone");
+        assert!(
+            pre.iter().any(|e| entry_is_ours(e, Some("foobar"))),
+            "foobar's hook is gone"
+        );
+        assert!(
+            pre.iter().any(|e| serde_json::to_string(e).unwrap().contains("other.exe")),
+            "another tool's hook was dropped"
+        );
+        // `--agent foo` must not be mistaken for `--agent foobar`.
+        assert!(
+            !pre
+                .iter()
+                .filter(|e| entry_is_ours(e, Some("foo")))
+                .any(|e| serde_json::to_string(e).unwrap().contains("foobar")),
+            "foo and foobar were confused"
+        );
+
+        // Removing one agent leaves the others alone.
+        let without_foo = without_ours_at(&with_foobar, Some("foo"));
+        let pre = without_foo["hooks"]["PreToolUse"].as_array().unwrap();
+        assert!(!pre.iter().any(|e| entry_is_ours(e, Some("foo"))));
+        assert!(pre.iter().any(|e| entry_is_ours(e, Some("foobar"))));
+        assert!(pre.iter().any(|e| entry_is_ours(e, None)));
+        // `Stop` was foo's only, so the key goes away entirely.
+        assert!(without_foo["hooks"].get("Stop").is_none());
+
+        // Unticking an event removes just that entry.
+        let stop_only = merged_at(&with_foobar, Some("foobar"), &[]);
+        assert!(
+            stop_only["hooks"]["PreToolUse"]
+                .as_array()
+                .is_some_and(|p| !p.iter().any(|e| entry_is_ours(e, Some("foobar")))),
+            "an unticked event must be cleaned up"
+        );
     }
 
     #[test]

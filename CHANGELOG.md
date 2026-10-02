@@ -14,3 +14,14 @@
   character media — none of the original assets ship in Montes.
 - Dropped features (kept out): macOS app, Linux, Gemini CLI / Antigravity /
   Cursor / Codex pills, Mail, terminal jump, speech, Google AI / OpenAI chat.
+
+### Phase 1 — extra agents
+
+- New **Settings… → Agents** section: register any tool that can run a hook
+  command with a name, the full path to its own JSON hook config and the events
+  it should report. Montes merges `montes-hook.exe --agent <name> <Event>` into
+  that file with the same dated backup, diff and fingerprint guard as the Claude
+  Code hooks; uninstall removes only that agent's entries and leaves other hooks
+  alone.
+- The saved settings gained an `agents` list, and `docs/AGENTS.md` now documents
+  the installer and the `PermissionRequest` limitation for third-party agents.
