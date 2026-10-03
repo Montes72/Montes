@@ -114,10 +114,41 @@ fn settings_path() -> PathBuf {
 }
 
 pub fn load() -> Settings {
-    match std::fs::read(settings_path()) {
-        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
-        Err(_) => Settings::default(),
+    let path = settings_path();
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        // No file is the ordinary first run, not something to report.
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Settings::default(),
+        Err(err) => {
+            crate::log::line(format!("settings unreadable at {}: {err}", path.display()));
+            return Settings::default();
+        }
+    };
+    match parse(&bytes) {
+        Ok(settings) => settings,
+        Err(err) => {
+            // Falling back is right — the app still runs — but doing it quietly is
+            // not: the user's settings are one edit away from being replaced by
+            // defaults and nothing on screen says so. Say it where it can be found.
+            crate::log::line(format!(
+                "settings unreadable at {} ({err}); using defaults",
+                path.display()
+            ));
+            Settings::default()
+        }
     }
+}
+
+/// The settings as they are on disk, which is not quite the bytes `save` wrote.
+///
+/// Notepad on Windows — the obvious tool for "I want to change one of these" —
+/// saves UTF-8 *with a byte-order mark*, and `serde_json` rejects one. Left
+/// alone that is not a parse error the user ever sees: it is every preference
+/// quietly back at its default, with nothing in the log and nothing on screen to
+/// say why. Three invisible bytes, and the app looks like it forgot everything.
+fn parse(bytes: &[u8]) -> Result<Settings, serde_json::Error> {
+    let body = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    serde_json::from_slice(body)
 }
 
 pub fn save(settings: &Settings) -> std::io::Result<()> {
@@ -126,4 +157,59 @@ pub fn save(settings: &Settings) -> std::io::Result<()> {
     let json = serde_json::to_vec_pretty(settings)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     std::fs::write(settings_path(), json)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The exact bytes `save` would write, so a test never has to remember every
+    /// field `Settings` grew.
+    fn as_saved(s: &Settings) -> Vec<u8> {
+        serde_json::to_vec_pretty(s).unwrap()
+    }
+
+    #[test]
+    fn settings_saved_by_notepad_are_read_back() {
+        // Notepad writes a BOM. Before this was handled that was not a warning,
+        // it was a silent reset: unwrap_or_default() handed back a Settings with
+        // every preference at its default and the app carried on as if the file
+        // said what it said.
+        let mut s = Settings::default();
+        s.sound_volume = 0.42;
+        s.model = "claude-opus-5".into();
+
+        let mut with_bom = vec![0xEF, 0xBB, 0xBF];
+        with_bom.extend_from_slice(&as_saved(&s));
+
+        let got = parse(&with_bom).expect("a file Notepad wrote should still parse");
+        assert_eq!(got.sound_volume, 0.42);
+        assert_eq!(got.model, "claude-opus-5");
+
+        // And the same file without one, which is what save() writes.
+        assert_eq!(parse(&as_saved(&s)).unwrap().sound_volume, 0.42);
+    }
+
+    #[test]
+    fn a_bom_only_starts_the_file_and_is_not_eaten_from_a_value() {
+        // strip_prefix, not trim: exactly one is removed, and a second one is
+        // left to be the parse error it is.
+        let mut twice = vec![0xEF, 0xBB, 0xBF, 0xEF, 0xBB, 0xBF];
+        twice.extend_from_slice(&as_saved(&Settings::default()));
+        assert!(parse(&twice).is_err());
+    }
+
+    #[test]
+    fn a_settings_file_from_before_the_language_setting_still_loads() {
+        // Every file written before Phase 10 has no `language` key at all. That is
+        // a file the app has to keep reading, not a broken one.
+        let mut obj: serde_json::Value =
+            serde_json::from_slice(&as_saved(&Settings::default())).unwrap();
+        obj.as_object_mut().unwrap().remove("language");
+        let got = parse(&serde_json::to_vec(&obj).unwrap())
+            .expect("an older settings file should still load");
+        // Not the default of the field: nobody chose one, so it is what the app
+        // said before the setting existed.
+        assert_eq!(got.language, "en");
+    }
 }

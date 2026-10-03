@@ -111,6 +111,20 @@
   request goes out, so a text-only model is refused with an explanation instead of
   answering as if it had seen the picture.
 
+### Fix — a settings file saved by Notepad lost every setting
+
+- Editing `%APPDATA%\Montes\settings.json` by hand and saving it from Notepad
+  wiped the user's preferences without a word. Notepad writes UTF-8 with a
+  byte-order mark, `serde_json` rejects one, and the rejection was absorbed by
+  `unwrap_or_default()` — so the app came back up on stock settings and behaved
+  as if nothing had ever been chosen. `load` now skips a leading BOM.
+- The same silent reset hid every other reason a settings file might not parse,
+  so a file that is genuinely broken is now reported in `montes.log` instead of
+  being replaced without a trace. A first run, which has no file at all, stays
+  quiet.
+- Found the hard way: this is what happened to the machine this was built on
+  while testing the language picker.
+
 ### Fix — the question never reached the model
 
 - Splitting the chat into `chat.rs` and the two providers introduced a bug that
