@@ -39,7 +39,8 @@ agent's name, the full path to its own JSON hook config and the events it should
 report, then writes `"<…>\montes-hook.exe" --agent <name> <Event>` into that
 file. It shows the diff first and takes a dated backup; uninstalling removes only
 that agent's entries and never touches anybody else's hooks in the file. The
-same caveats as above apply — an absolute path, and no `PermissionRequest`.
+same caveats as above apply — an absolute path, and the hook has to be able to
+wait for a decision if you want the approval card.
 
 ## Payload format
 
@@ -57,11 +58,10 @@ add it yourself if you talk to the pipe directly:
 
 ## Supported events
 
-All standard Claude Code hook events are supported, **except `PermissionRequest`**:
-approval cards are not yet implemented for third-party agents (only Claude Code
-gets one). A `PermissionRequest` from an external agent is answered immediately
-with no decision, so the relay writes nothing and the agent re-asks in its
-terminal.
+Every standard Claude Code hook event is supported, `PermissionRequest` included:
+an agent whose hook can wait and read stdout gets the island's **Allow / Deny**
+card like Claude Code does. All the others are fire-and-forget — the relay writes
+nothing and your session carries on.
 
 The pill lifecycle:
 
@@ -76,6 +76,33 @@ The pill lifecycle:
 | `StopFailure` | State → error |
 | `SessionEnd` | Pill removed |
 | `SubagentStart` / `SubagentStop` | Step added to ticker |
+
+## Approval cards for your agent
+
+Send `PermissionRequest` and the island shows the same card Claude Code gets:
+your agent's name, the command or path being authorised, and **Allow / Deny**.
+
+```json
+{ "hook_event_name": "PermissionRequest", "session_id": "s1", "montes_agent": "my-tool",
+  "tool_name": "bash", "tool_input": { "command": "rm -rf build" } }
+```
+
+Your hook must **wait for the relay's stdout**, and read a decision out of it:
+
+| Written by a human | On your stdout |
+|---|---|
+| Allow | `{"behavior":"allow"}` |
+| Deny | `{"behavior":"deny","message":"Denied from Montes"}` |
+
+Nothing on stdout means nobody decided: treat it exactly as if Montes were closed
+and ask your own user. That is also what happens when the island is closed, paused,
+or another request already holds the card — so **always keep a timeout** and let
+the tool ask in the terminal when it expires. Montes gives up after ~108 s, so a
+hook timeout above that is the safe side.
+
+This decision object is Claude Code's own, minus the `hookSpecificOutput`
+envelope that only Claude Code knows how to read — the envelope is the one part
+of Claude's protocol that is not a shared standard.
 
 ## Agent pills vs the Claude pill
 
@@ -97,6 +124,35 @@ montes-hook.exe --agent <your-name> <EventName>
 ```
 
 and let the relay forward the event.
+
+## opencode, worked through
+
+opencode is not a hook config to merge into — it loads plugins from files — so
+Montes ships one and puts it in the right place for you.
+
+**Settings… → Agents → opencode → Install…** shows the whole file as a diff, takes
+a dated backup, and writes `~/.config/opencode/plugins/montes.ts` (or under
+`OPENCODE_CONFIG_DIR`, if you moved opencode's config). Restart opencode
+afterwards: plugins are read at startup, not per event. Uninstalling removes that
+one file, and refuses to touch a file Montes did not write.
+
+The plugin reports:
+
+| opencode event | Montes |
+|---|---|
+| `session.created` | `SessionStart` |
+| `message.part.updated` (a text part) | `UserPromptSubmit` — once per message, not per chunk |
+| `tool.execute.before` | `PreToolUse`, with the tool and its arguments |
+| `tool.execute.after` | `PostToolUse` |
+| `permission.asked` | `Notification`: "bash needs permission?" |
+| `session.idle` | `Stop` |
+| `session.error` | `StopFailure` |
+| `session.deleted` | `SessionEnd` |
+
+**Permission asks are a badge, not a card.** opencode's plugin API can see a
+permission request but has no way to answer one, so the island would be showing a
+decision it cannot deliver. Montes says what is waiting and leaves the answer where
+opencode asks it — in the terminal opencode is already sitting in.
 
 ## Quick test (Windows)
 

@@ -13,7 +13,13 @@
 //!   island is the whole point. No answer means empty stdout, and Claude Code
 //!   asks in the terminal exactly as if Montes were not installed.
 //!
-//! Usage: `montes-hook <EventName>` (the name is also read from the JSON).
+//! Any other agent is welcome (`--agent <name>`, see docs/AGENTS.md): it gets the
+//! same card, and what lands on its stdout is the decision object itself rather
+//! than Claude Code's envelope, which is the only part of the output that is
+//! Claude's.
+//!
+//! Usage: `montes-hook [--agent <name>] <EventName>` (the name is also read from
+//! the JSON).
 
 use std::io::{Read, Write};
 use std::sync::mpsc;
@@ -38,11 +44,25 @@ mod win;
 #[cfg(windows)]
 use win::connect;
 
-fn main() {
-    let Some((payload, event)) = read_event() else { std::process::exit(0) };
+/// What one invocation of the relay carries.
+struct Request {
+    /// The JSON line written to the pipe.
+    payload: String,
+    /// The event name, from the JSON or from argv.
+    event: String,
+    /// True when `--agent <name>` named a third-party tool. It changes the shape
+    /// printed on stdout and nothing else: the card, the deadline and the wire
+    /// format are identical, because there is only one of each of those here.
+    external: bool,
+}
 
-    let waits_for_answer = event == "PermissionRequest";
+fn main() {
+    let Some(req) = read_event() else { std::process::exit(0) };
+
+    let waits_for_answer = req.event == "PermissionRequest";
     let budget = if waits_for_answer { DECISION_BUDGET } else { FIRE_AND_FORGET_BUDGET };
+    let external = req.external;
+    let payload = req.payload;
 
     // The worker owns every blocking call. If it overruns the budget we simply
     // stop listening and exit: the process dying takes the pipe handle with it.
@@ -54,7 +74,7 @@ fn main() {
     });
 
     if let Ok(Some(decision)) = rx.recv_timeout(budget) {
-        if let Some(json) = decision_json(&decision) {
+        if let Some(json) = decision_json(&decision, external) {
             let mut out = std::io::stdout();
             let _ = writeln!(out, "{json}");
             let _ = out.flush();
@@ -64,24 +84,32 @@ fn main() {
     std::process::exit(0);
 }
 
-/// The documented PermissionRequest output. Anything we do not recognise prints
-/// nothing at all rather than guessing — silence is the safe answer.
+/// The decision, in the shape the calling tool can read. Anything we do not
+/// recognise prints nothing at all rather than guessing — silence is the safe
+/// answer, because the tool then asks its own user.
+///
+/// Claude Code reads it out of a documented `hookSpecificOutput` envelope, which
+/// it would not read from anywhere else; a third-party agent gets the decision
+/// object itself. Only the envelope is Claude's.
 /// See https://code.claude.com/docs/en/hooks
-fn decision_json(decision: &str) -> Option<String> {
+fn decision_json(decision: &str, external: bool) -> Option<String> {
     let behavior = match decision.trim() {
         // "always" still answers a plain allow; remembering it is the island's
         // business, not Claude Code's.
-        "allow" | "always" => r#"{"behavior":"allow"}"#.to_string(),
-        "deny" => r#"{"behavior":"deny","message":"Denied from Montes"}"#.to_string(),
+        "allow" | "always" => r#"{"behavior":"allow"}"#,
+        "deny" => r#"{"behavior":"deny","message":"Denied from Montes"}"#,
         _ => return None,
     };
+    if external {
+        return Some(behavior.to_string());
+    }
     Some(format!(
         r#"{{"hookSpecificOutput":{{"hookEventName":"PermissionRequest","decision":{behavior}}}}}"#
     ))
 }
 
 /// Reads stdin and returns the payload to forward plus the event name.
-fn read_event() -> Option<(String, String)> {
+fn read_event() -> Option<Request> {
     let mut raw = Vec::new();
     if std::io::stdin().read_to_end(&mut raw).is_err() || raw.is_empty() {
         return None;
@@ -111,7 +139,8 @@ fn read_event() -> Option<(String, String)> {
     }
     // Which agent this hook was installed for. Absent means Claude Code,
     // so existing hook commands keep working unchanged.
-    if !agent.is_empty() {
+    let external = !agent.is_empty();
+    if external {
         map.insert("montes_agent".into(), serde_json::Value::String(agent));
     }
     let event = map
@@ -159,7 +188,11 @@ fn read_event() -> Option<(String, String)> {
 
     let mut line = payload.to_string();
     line.push('\n');
-    Some((line, event))
+    Some(Request {
+        payload: line,
+        event,
+        external,
+    })
 }
 
 /// Caps every string in the payload. A single Write can carry a whole file.
@@ -220,23 +253,42 @@ mod tests {
     #[test]
     fn decision_json_matches_the_documented_shape() {
         assert_eq!(
-            decision_json("allow").unwrap(),
+            decision_json("allow", false).unwrap(),
             r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#
         );
         assert_eq!(
-            decision_json("deny").unwrap(),
+            decision_json("deny", false).unwrap(),
             r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Denied from Montes"}}}"#
         );
         // "always" is an island concept; Claude Code just gets an allow.
-        assert!(decision_json("always").unwrap().contains(r#""behavior":"allow""#));
+        assert!(decision_json("always", false).unwrap().contains(r#""behavior":"allow""#));
+    }
+
+    #[test]
+    fn a_third_party_agent_gets_the_decision_without_claudes_envelope() {
+        // No tool outside Claude Code has ever heard of hookSpecificOutput, so
+        // wrapping the decision for one would print something it cannot read and
+        // it would wait out its own timeout instead.
+        assert_eq!(
+            decision_json("allow", true).unwrap(),
+            r#"{"behavior":"allow"}"#
+        );
+        assert_eq!(
+            decision_json("deny", true).unwrap(),
+            r#"{"behavior":"deny","message":"Denied from Montes"}"#
+        );
+        // The word the island sends is the only thing that differs.
+        assert!(decision_json("always", true).unwrap().contains(r#""behavior":"allow""#));
     }
 
     #[test]
     fn anything_unrecognised_prints_nothing() {
-        assert!(decision_json("").is_none());
-        assert!(decision_json("maybe").is_none());
-        // The shape the app used to send must not be mistaken for a decision.
-        assert!(decision_json(r#"{"permissionDecision":"allow"}"#).is_none());
+        for external in [false, true] {
+            assert!(decision_json("", external).is_none());
+            assert!(decision_json("maybe", external).is_none());
+            // The shape the app used to send must not be mistaken for a decision.
+            assert!(decision_json(r#"{"permissionDecision":"allow"}"#, external).is_none());
+        }
     }
 
     #[test]

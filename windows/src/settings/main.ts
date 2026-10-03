@@ -3,7 +3,7 @@
 // integrations land here too in a later stage.
 
 import "./settings.css";
-import { Bridge, onEvent, type HookStatus, type OllamaModelInfo } from "../core/bridge";
+import { Bridge, onEvent, type HookStatus, type OllamaModelInfo, type OpencodeStatus } from "../core/bridge";
 import { DEFAULT_SETTINGS, type Agent, type Settings } from "../core/state";
 import { h, clear } from "../views/dom";
 
@@ -205,7 +205,113 @@ function agentsSection(): HTMLElement {
     }
 
     for (const agent of settings.agents) body.append(agentCard(agent));
+    body.append(opencodeCard());
     body.append(addForm());
+  }
+
+  /**
+   * opencode is not a JSON hook config to merge into — it loads plugins from
+   * files — so it gets its own block and its own install path rather than being
+   * squeezed into the generic form above.
+   */
+  function opencodeCard(): HTMLElement {
+    const dot = statusDot(false);
+    const statusText = h("span", { class: "hint", text: "Checking…" });
+    const install = h("button", { class: "primary", text: "Install…" });
+    const uninstall = h("button", { class: "danger", text: "Uninstall…" });
+    let state: OpencodeStatus | null = null;
+
+    install.addEventListener("click", () => void showOpencodePreview(true));
+    uninstall.addEventListener("click", () => void showOpencodePreview(false));
+
+    async function refresh() {
+      state = await Bridge.opencodeStatus();
+      dot.style.background = state?.installed ? "#22c55e" : "#f4505e";
+      if (!state) statusText.textContent = "Could not ask the app about it.";
+      else if (state.foreign) {
+        statusText.textContent = `There is a file at ${state.pluginPath} that Montes did not write. It is left alone — move it aside if you want ours there.`;
+      } else if (state.installed) {
+        statusText.textContent = `Plugin in place at ${state.pluginPath}.`;
+      } else {
+        statusText.textContent = state?.hookReady
+          ? `Not installed. It goes to ${state.pluginPath}.`
+          : "The relay is missing, so nothing would reach Montes. Reinstall Montes first.";
+      }
+      const has = state?.installed || state?.foreign;
+      uninstall.style.display = has ? "" : "none";
+      install.textContent = state?.installed ? "Reinstall…" : "Install…";
+      install.style.display = state?.foreign ? "none" : "";
+    }
+    void refresh();
+
+    return h("div", {
+      style: "display:flex;flex-direction:column;gap:8px;padding:10px 0;border-top:1px solid rgba(255,255,255,.08)",
+    },
+      h("div", { style: "display:flex;align-items:center;gap:8px" }, dot,
+        h("span", { style: "font-weight:600", text: "opencode" })),
+      h("div", {
+        class: "hint",
+        text: "Writes a small plugin into opencode's plugins directory, so an opencode session gets its own pill: thinking, working, finished. Its permission asks arrive as a badge rather than an Allow / Deny card — opencode's plugin API can see a request but cannot answer one, so a card would never reach the tool.",
+      }),
+      h("div", { style: "display:flex;gap:8px" }, install, uninstall),
+      statusText,
+    );
+  }
+
+  /** Same look-before-you-write flow as every other file this app touches. */
+  async function showOpencodePreview(install: boolean) {
+    let preview;
+    try {
+      preview = await Bridge.opencodePreview(install);
+    } catch (err) {
+      showError(String(err).replace(/^Error:\s*/, ""));
+      return;
+    }
+    clear(body);
+    body.append(
+      h("div", {
+        class: "hint",
+        text: install
+          ? `This is exactly what will be written to ${preview.settingsPath}. It is the whole plugin — read it, because it runs inside opencode.`
+          : `This removes ${preview.settingsPath} and nothing else.`,
+      }),
+      renderDiff(preview.diff),
+      h("div", { class: "row" }, h("span", { class: "path", text: `Backup → ${preview.backup}` })),
+    );
+    const confirm = h("button", {
+      class: install ? "primary" : "danger",
+      text: install ? "Back up and write" : "Back up and remove",
+    });
+    confirm.addEventListener("click", async () => {
+      confirm.disabled = true;
+      try {
+        const backup = await Bridge.opencodeApply(install, preview.fingerprint);
+        clear(body);
+        body.append(h("div", {
+          class: "notice ok",
+          text: install
+            ? `Done. Previous file saved as ${backup}. Start a new opencode session — it loads plugins at startup.`
+            : `Done. Previous file saved as ${backup}.`,
+        }));
+        window.setTimeout(() => { clear(body); void draw(); }, 2600);
+      } catch (err) {
+        confirm.disabled = false;
+        body.append(h("div", { class: "notice err", text: `Could not write: ${String(err)}` }));
+      }
+    });
+    body.append(h("div", { class: "row" }, confirm, h("button", {
+      text: "Cancel", onclick: () => { clear(body); void draw(); },
+    })));
+  }
+
+  function showError(message: string) {
+    clear(body);
+    body.append(
+      h("div", { class: "notice err", text: message }),
+      h("div", { class: "row" }, h("button", {
+        text: "Back", onclick: () => { clear(body); void draw(); },
+      })),
+    );
   }
 
   function eventPicker(chosen: Set<string>, onChange: (event: string, on: boolean) => void): HTMLElement {

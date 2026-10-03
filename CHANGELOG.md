@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Phase 9 — opencode, and Allow / Deny for any agent
+
+- **opencode is a supported agent.** It is not a hook config to merge into — it
+  loads plugins from files — so Montes ships one and installs it under the same
+  contract as everything else it writes: the whole file shown as a diff, a dated
+  backup, an explicit click, and a refusal to touch a file Montes did not write.
+  The plugin maps opencode's own events onto the relay (`session.created`,
+  `tool.execute.before`, `session.idle`, …), reports the user's prompt **once per
+  message** instead of once per streamed chunk, and is deliberately silent about
+  anything else. It is written so that a missing, broken or slow relay costs an
+  opencode session nothing.
+- **opencode's permission asks are a badge, not a card.** Its plugin API can see a
+  request and has no way to answer one, so an Allow / Deny card would be a
+  decision that could never reach the tool. The pill says what is waiting and the
+  answer stays where opencode asks it.
+- **An agent plugged in through the relay can now be approved from the island.**
+  Until now `PermissionRequest` was the one event a third-party tool could not
+  report: its request was declined on arrival and its user re-asked in the
+  terminal, so a tool like opencode was watchable but not answerable. Any hook that
+  can wait on stdout now gets the same **Allow / Deny** card Claude Code does,
+  named after the agent that asked — not after whichever pill happens to be in
+  front, which would have been a lie on a busy screen. `ApprovalInfo` carries the
+  asking pill so answering puts *that* agent back to work.
+- **The decision on stdout is now the decision object itself** for anyone but
+  Claude Code: `{"behavior":"allow"}` / `{"behavior":"deny","message":"Denied
+  from Montes"}`. Only the `hookSpecificOutput` envelope is Claude's, and a tool
+  that has never heard of it would have waited out its own timeout while reading
+  something it could not parse. Nothing on stdout still means "nobody decided" —
+  ask your own user, exactly as if Montes were closed.
+- An agent whose session ends **while its card is up** no longer leaves a request
+  on screen that can never be granted: the card goes back to the terminal and the
+  pill is removed.
+
 ### Phase 8 — an assistant that runs on your own machine
 
 - **Ollama is a second back end for the chat.** With an Anthropic API key saved

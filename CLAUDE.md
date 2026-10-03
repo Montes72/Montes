@@ -8,11 +8,13 @@ answer, chat and drop files without leaving what they're doing.
 ## Where things are
 - `windows/src-tauri/` — the Rust backend: the transparent island window
   (`platform/windows.rs`), the named pipe and approval flow (`pipe.rs`), the
-  Claude Code hooks manager and the extra-agent installer (`hooks.rs`), the chat
-  and its provider rule (`chat.rs`), the two back ends it dispatches to
-  (`claude.rs` for the Anthropic API, `ollama.rs` for a model on the user's own
-  machine), the seven service pollers (`integrations.rs`), files inbox/ingest
-  (`files.rs`), secrets in the Windows Credential Manager (`secrets.rs`).
+  Claude Code hooks manager and the extra-agent installer (`hooks.rs`), the
+  opencode plugin it installs (`opencode.rs`, whose template lives in
+  `resources/opencode/montes.ts`), the chat and its provider rule (`chat.rs`), the
+  two back ends it dispatches to (`claude.rs` for the Anthropic API, `ollama.rs`
+  for a model on the user's own machine), the seven service pollers
+  (`integrations.rs`), files inbox/ingest (`files.rs`), secrets in the Windows
+  Credential Manager (`secrets.rs`).
 - `windows/hook/` — `montes-hook.exe`, the tiny relay Claude Code runs on every
   hook event. Never blocks Claude Code.
 - `windows/src/` — the front end (TypeScript, no framework):
@@ -91,6 +93,13 @@ They do not run on the GNU target: the binaries die at startup with
 - Keep the branded constants consistent: product name `Montes`, identifier
   `com.montes.app`, pipe `\\.\pipe\montes-<sid>`, `%LOCALAPPDATA%\Montes`,
   `%APPDATA%\Montes`, marker `montes-hook`.
+- Never write a file into another tool's config without the same contract the
+  Claude Code hooks get: dated backup, diff shown first, an explicit click, and a
+  fingerprint so a file that changed underneath is never overwritten. Refuse to
+  edit or delete a file Montes did not write, even when only the name matches.
+- Never show a decision the other tool cannot receive. If a tool's API cannot
+  answer a permission request, the island says one is waiting instead of showing
+  Allow / Deny that would go nowhere.
 - Existing views stay exactly as they are: never restyle what already ships
   unless explicitly asked.
 - Pill IDs are stable contract values (Credential Manager, settings, hook

@@ -26,6 +26,11 @@ export interface ApprovalInfo {
   sessionId: string;
   tool: string;
   command: string;
+  /**
+   * The pill that asked. Not `focusId`: any agent can raise a card while the user
+   * is looking at another one, and a card that names the wrong agent is a lie.
+   */
+  agentId: string;
 }
 
 export interface ChatMessage {

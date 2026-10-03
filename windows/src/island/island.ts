@@ -164,8 +164,10 @@ export class Island {
         State.pendingApproval = null;
         State.isPinned = false;
         this.fsm.pinned = false;
-        State.updateTask("integration_claude", "working");
-        State.setPillBadge("integration_claude", null);
+        // Whichever agent asked is the pill that goes back to work; clearing
+        // Claude's instead would leave the asking agent stuck on "approval".
+        State.updateTask(req.agentId, "working");
+        State.setPillBadge(req.agentId, null);
         this.setView(State.defaultView());
       },
       toggleSound: () => {

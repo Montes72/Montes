@@ -74,13 +74,20 @@ export const Bridge = {
     callOrThrow<string>("hooks_apply", { install, fingerprint }),
 
   // ── Extra agents ──────────────────────────────────────────────────────────
-  /** The events an agent may report (all but PermissionRequest). */
+  /** The events an agent may report, approval requests included. */
   agentEvents: () => call<string[]>("agent_events"),
   agentStatus: (agent: Agent) => call<HookStatus>("agent_status", { agent }),
   agentPreview: (agent: Agent, install: boolean) =>
     callOrThrow<HookPreview>("agent_preview", { agent, install }),
   agentApply: (agent: Agent, install: boolean, fingerprint: string) =>
     callOrThrow<string>("agent_apply", { agent, install, fingerprint }),
+
+  // ── opencode ───────────────────────────────────────────────────────────────
+  opencodeStatus: () => call<OpencodeStatus>("opencode_status"),
+  opencodePreview: (install: boolean) =>
+    callOrThrow<HookPreview>("opencode_preview", { install }),
+  opencodeApply: (install: boolean, fingerprint: string) =>
+    callOrThrow<string>("opencode_apply", { install, fingerprint }),
 
   approvalDecision: (requestId: string, decision: "allow" | "deny") =>
     call<void>("approval_decision", { requestId, decision }),
@@ -203,6 +210,16 @@ export interface HookPreview {
   settingsPath: string;
   /** Hand back to hooksApply so only the reviewed diff is ever written. */
   fingerprint: string;
+}
+
+export interface OpencodeStatus {
+  /** True only when *this build's* plugin is the file that is there. */
+  installed: boolean;
+  /** A file is in the way and is not ours: never edited, never deleted. */
+  foreign: boolean;
+  pluginPath: string;
+  hookPath: string;
+  hookReady: boolean;
 }
 
 /** Same as `call`, but surfaces the error so the UI can show what went wrong. */

@@ -301,7 +301,11 @@ function buildApproval(actions: ViewActions): ViewHost {
     el,
     sync() {
       clear(who);
-      who.append(agentWho(State.focusTask, "needs permission"));
+      // The agent that asked, not the pill the user happens to be looking at:
+      // any agent can raise a card while another one is in front.
+      const asked = State.pendingApproval?.agentId;
+      const asking = (asked ? State.tasks.find((t) => t.id === asked) : null) ?? State.focusTask;
+      who.append(agentWho(asking, "needs permission"));
       // The whole point of approving here rather than in the terminal: this line
       // is the command, the file path or the URL being authorised, not just the
       // name of the tool asking.

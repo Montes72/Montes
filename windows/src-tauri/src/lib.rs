@@ -9,6 +9,7 @@ mod integrations;
 mod island;
 mod log;
 mod ollama;
+mod opencode;
 mod pipe;
 mod platform;
 mod secrets;
@@ -28,6 +29,7 @@ use files::DroppedFile;
 use hooks::{HookPreview, HookStatus};
 use island::{PollGate, ScreenInfo};
 use ollama::OllamaModel;
+use opencode::OpencodeStatus;
 use pipe::Pending;
 use settings::Settings;
 
@@ -261,6 +263,26 @@ fn agent_apply(
     };
     let _ = app.emit("settings-changed", updated);
     Ok(backup)
+}
+
+/// Whether opencode has Montes' plugin, and where it would be written.
+#[tauri::command]
+fn opencode_status() -> OpencodeStatus {
+    opencode::status()
+}
+
+/// The diff for opencode's plugin file, under the same "look before you write"
+/// contract as the Claude Code hooks.
+#[tauri::command]
+fn opencode_preview(install: bool) -> Result<HookPreview, String> {
+    opencode::preview(install)
+}
+
+/// Writes (or removes) opencode's plugin after an explicit click, and only when
+/// the file still matches the diff the user was shown.
+#[tauri::command]
+fn opencode_apply(install: bool, fingerprint: String) -> Result<String, String> {
+    opencode::apply(install, &fingerprint)
 }
 
 /// The island has the card on screen, so the long wait for a human may begin.
@@ -511,6 +533,9 @@ pub fn run() {
             agent_status,
             agent_preview,
             agent_apply,
+            opencode_status,
+            opencode_preview,
+            opencode_apply,
             approval_decision,
             approval_ack,
             approval_decline,

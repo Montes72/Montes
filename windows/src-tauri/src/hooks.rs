@@ -33,15 +33,12 @@ pub const HOOK_EVENTS: &[(&str, u64)] = &[
     ("SubagentStop", 10),
 ];
 
-/// The events a third-party agent may report. `PermissionRequest` is left out:
-/// approval cards only work for Claude Code — an external agent's request is
-/// answered immediately with no decision and it re-asks in its terminal.
+/// The events a third-party agent may report. Every one of them, including
+/// `PermissionRequest`: a hook that can wait on stdout and read a decision gets
+/// the island's card, and the timeout it is installed with is the human's clock
+/// rather than the fire-and-forget one.
 pub fn agent_events() -> Vec<&'static str> {
-    HOOK_EVENTS
-        .iter()
-        .filter(|(event, _)| *event != "PermissionRequest")
-        .map(|(event, _)| *event)
-        .collect()
+    HOOK_EVENTS.iter().map(|(event, _)| *event).collect()
 }
 
 /// Marker that identifies a Montes entry inside settings.json.
@@ -237,7 +234,7 @@ fn stamp() -> String {
 }
 
 /// A dated backup beside the target, keeping its own file name.
-fn backup_path_at(path: &Path) -> PathBuf {
+pub fn backup_path_at(path: &Path) -> PathBuf {
     let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("settings.json");
     path.with_file_name(format!("{name}.bak-{}", stamp()))
 }
@@ -253,7 +250,7 @@ fn fingerprint(bytes: &[u8]) -> String {
     format!("{hash:016x}")
 }
 
-fn current_fingerprint_at(path: &Path) -> String {
+pub fn current_fingerprint_at(path: &Path) -> String {
     match std::fs::read(path) {
         Ok(bytes) => fingerprint(&bytes),
         Err(_) => fingerprint(b""),
@@ -436,7 +433,7 @@ pub fn agent_write(
 /// Writes `bytes` to `temp`, which is about to replace `original`. (The
 /// `original` argument kept its purpose on Unix, where the new file had to be
 /// given the original's permissions; on Windows it is unused.)
-fn write_like(temp: &Path, original: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub fn write_like(temp: &Path, original: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
@@ -539,7 +536,7 @@ fn stage_and_replace(src: &Path, dest: &Path) -> std::io::Result<()> {
 // ── Minimal unified diff (LCS) ────────────────────────────────────────────────
 
 /// settings.json is short, so a plain O(n·m) LCS is the simplest honest diff.
-fn unified_diff(before: &str, after: &str) -> String {
+pub fn unified_diff(before: &str, after: &str) -> String {
     let a: Vec<&str> = before.lines().collect();
     let b: Vec<&str> = after.lines().collect();
     let (n, m) = (a.len(), b.len());
@@ -617,6 +614,20 @@ mod tests {
     use super::*;
 
     const WHERE: &str = "settings.json";
+
+    #[test]
+    fn a_third_party_agent_may_ask_for_permission_too() {
+        // It used to be left out, so an external agent's request was answered
+        // immediately with no decision and its user re-asked in the terminal.
+        assert!(agent_events().contains(&"PermissionRequest"));
+        // And with a clock that expects a human, not the fire-and-forget one.
+        let seconds = HOOK_EVENTS
+            .iter()
+            .find(|(event, _)| *event == "PermissionRequest")
+            .map(|(_, s)| *s)
+            .unwrap_or_default();
+        assert!(seconds >= 100, "a permission card is worth waiting for");
+    }
 
     #[test]
     fn a_utf8_bom_is_stripped_not_treated_as_corruption() {
