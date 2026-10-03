@@ -1,12 +1,14 @@
 // Montes for Windows — app wiring and the commands the island calls.
 
-mod claude;
 mod capture;
+mod chat;
+mod claude;
 mod files;
 mod hooks;
 mod integrations;
 mod island;
 mod log;
+mod ollama;
 mod pipe;
 mod platform;
 mod secrets;
@@ -21,10 +23,11 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_autostart::{ManagerExt, MacosLauncher};
 
-use claude::{Chat, ChatContext, ChatReply};
+use chat::{Chat, ChatContext, ChatReply, ResolvedProvider};
 use files::DroppedFile;
 use hooks::{HookPreview, HookStatus};
 use island::{PollGate, ScreenInfo};
+use ollama::OllamaModel;
 use pipe::Pending;
 use settings::Settings;
 
@@ -277,7 +280,14 @@ fn approval_decline(app: AppHandle, request_id: String) {
 
 // ── Chat, files and secrets ───────────────────────────────────────────────────
 
-/// One chat turn. The API key and any file bytes stay on the Rust side.
+/// One chat turn. The API key and any file bytes stay on the Rust side, and so
+/// does the choice of back end: which one answers is the settings' business, not
+/// the island's.
+///
+/// The settings lock is taken and released before the await. Holding a mutex
+/// across a request that can take ten minutes on a local model would block every
+/// other command that reads the settings, including the ones that move the
+/// island.
 #[tauri::command]
 async fn chat_send(
     shared: State<'_, Shared>,
@@ -285,8 +295,33 @@ async fn chat_send(
     query: String,
     context: Option<ChatContext>,
 ) -> Result<ChatReply, String> {
-    let model = shared.settings.lock().unwrap().model.clone();
-    claude::send(&chat, &model, query, context).await
+    let settings = shared.settings.lock().unwrap().clone();
+    chat::send(&chat, &settings, query, context).await
+}
+
+/// Which back end would answer right now, and why. The settings show this rather
+/// than reimplementing the rule, which is the only way "automatic" stays
+/// something other than a black box.
+#[tauri::command]
+async fn chat_provider(shared: State<'_, Shared>) -> Result<ResolvedProvider, String> {
+    let settings = shared.settings.lock().unwrap().clone();
+    chat::resolve(&settings).await
+}
+
+/// Everything Ollama has installed, and what each model can actually do.
+///
+/// Called from the settings window, so a few seconds is fine and an unreachable
+/// server is reported rather than shown as an empty list — an empty list reads as
+/// "you have no models", which is a different problem entirely.
+///
+/// `url` is optional so the model list can be refreshed for an address that has
+/// been typed but not saved yet.
+#[tauri::command]
+async fn ollama_models(shared: State<'_, Shared>, url: Option<String>) -> Result<Vec<OllamaModel>, String> {
+    let saved = shared.settings.lock().unwrap().ollama_url.clone();
+    let typed = url.unwrap_or_default();
+    let target = if typed.trim().is_empty() { saved } else { typed };
+    ollama::models(&ollama::normalise_url(&target)).await
 }
 
 #[tauri::command]
@@ -482,6 +517,8 @@ pub fn run() {
             log_line,
             chat_send,
             chat_reset,
+            chat_provider,
+            ollama_models,
             ingest_file,
             capture_window,
             secret_present,

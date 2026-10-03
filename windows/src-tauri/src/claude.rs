@@ -4,12 +4,9 @@
 // Everything happens here rather than in the island: the API key never leaves
 // the Credential Manager, and file bytes never cross the IPC boundary.
 
-use std::sync::Mutex;
-
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::secrets;
+use super::chat::{Attachment, Chat, ChatReply};
 
 const ENDPOINT: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -17,139 +14,93 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// a fallback model inside the same call, so the island never shows a dead end.
 const FALLBACK_BETA: &str = "server-side-fallback-2026-07-01";
 const MAX_TOKENS: u32 = 4096;
-/// Text and code files are inlined; anything larger is skipped, as on macOS.
-const MAX_INLINE_TEXT: u64 = 200_000;
 
 pub const DEFAULT_MODEL: &str = "claude-opus-5";
 
-const SYSTEM_PROMPT: &str = "You are Montes, a personal AI assistant living at the top of the user's screen. \
-You have web search access and can help with absolutely anything — research, coding, finding places, recommendations, tasks, questions. \
+/// Who Montes is, in a form both back ends can start from. What it can *do* is
+/// the back end's business — `chat` keeps the shared half, and each provider
+/// adds what is actually true of it.
+pub(crate) const PERSONA: &str = "You are Montes, a personal AI assistant living at the top of the user's screen. \
 Respond in the user's language. Be thorough and complete — use as much detail as the task requires. \
 No markdown formatting (no **, no ##, no bullet dashes). Use plain text with line breaks.";
 
-#[derive(Default)]
-pub struct Chat {
-    /// Full multi-turn history, including tool_use / tool_result blocks.
-    messages: Mutex<Vec<Value>>,
+fn system_prompt() -> String {
+    format!(
+        "{PERSONA} You have web search access and can help with absolutely anything — research, \
+         coding, finding places, recommendations, tasks, questions."
+    )
 }
 
-impl Chat {
-    pub fn reset(&self) {
-        self.messages.lock().unwrap().clear();
-    }
-
-    fn is_empty(&self) -> bool {
-        self.messages.lock().unwrap().is_empty()
-    }
-
-    fn push(&self, message: Value) {
-        self.messages.lock().unwrap().push(message);
-    }
-
-    fn pop(&self) {
-        self.messages.lock().unwrap().pop();
-    }
-
-    fn snapshot(&self) -> Vec<Value> {
-        self.messages.lock().unwrap().clone()
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
-pub enum ChatContext {
-    File { name: String, path: String },
-    Window { app_name: String, title: String, url: Option<String>, image: Option<String> },
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ChatReply {
-    pub text: String,
-}
-
-/// One chat turn. Returns the assistant's text, or a message the island shows
-/// in the note view.
+/// One chat turn.
+///
+/// `opening` is the dropped file or captured window, which `chat` has already
+/// decided belongs in this turn. The conversation is not a parameter: `Chat::turn`
+/// records the question and returns what the request must carry, so no provider
+/// can send a history that has not caught up with it.
 pub async fn send(
     chat: &Chat,
+    opening: Vec<Attachment>,
     model: &str,
     query: String,
-    context: Option<ChatContext>,
 ) -> Result<ChatReply, String> {
-    let key = secrets::get("anthropic-api-key")
+    let key = crate::secrets::get("anthropic-api-key")
         .ok_or_else(|| "API key missing. Open settings.".to_string())?;
 
-    let mut content: Vec<Value> = Vec::new();
-
-    // File / window context rides along with the first message only, exactly
-    // like ClaudeService.chat().
-    if chat.is_empty() {
-        match &context {
-            Some(ChatContext::File { name, path }) => {
-                if let Some(block) = file_block(path) {
-                    content.push(block);
-                }
-                content.push(json!({ "type": "text", "text": format!("File: {name}") }));
-            }
-            Some(ChatContext::Window { app_name, title, url, image }) => {
-                // The screenshot first, then what it is: the model reads the
-                // picture as part of the question rather than as a caption
-                // attached to somebody else's words.
-                if let Some(image) = image {
-                    content.push(json!({
-                        "type": "image",
-                        "source": { "type": "base64", "media_type": "image/png", "data": image }
-                    }));
-                }
-                let mut text = format!("Context — App: {app_name}, Window: {title}");
-                if let Some(url) = url {
-                    text.push_str(&format!(", URL: {url}"));
-                }
-                content.push(json!({ "type": "text", "text": text }));
-            }
-            None => {}
-        }
-    }
+    let mut content: Vec<Value> = opening
+        .into_iter()
+        .map(|att| match att {
+            Attachment::Image { media_type, data } => json!({
+                "type": "image",
+                "source": { "type": "base64", "media_type": media_type, "data": data }
+            }),
+            Attachment::Document { media_type, data } => json!({
+                "type": "document",
+                "source": { "type": "base64", "media_type": media_type, "data": data }
+            }),
+            Attachment::Text { body } => json!({ "type": "text", "text": body }),
+        })
+        .collect();
     content.push(json!({ "type": "text", "text": query }));
 
-    chat.push(json!({ "role": "user", "content": content }));
+    let messages = chat.turn(json!({ "role": "user", "content": content }));
 
     let body = json!({
         "model": model,
         "max_tokens": MAX_TOKENS,
-        "system": SYSTEM_PROMPT,
+        "system": system_prompt(),
         "tools": [{ "type": "web_search_20260209", "name": "web_search", "max_uses": 5 }],
         "fallbacks": "default",
-        "messages": chat.snapshot(),
+        "messages": messages,
     });
 
     let response = match call(&key, &body).await {
         Ok(v) => v,
         Err(err) => {
-            chat.pop(); // keep the history consistent with what the model saw
+            chat.rollback(); // keep the history consistent with what the model saw
             return Err(err);
         }
     };
 
     // A policy decline comes back as HTTP 200 with stop_reason "refusal".
     if response.get("stop_reason").and_then(Value::as_str) == Some("refusal") {
-        chat.pop();
+        chat.rollback();
         let why = response
             .get("stop_details")
             .and_then(|d| d.get("explanation"))
             .and_then(Value::as_str)
-            .unwrap_or("Claude declined this one.");
-        return Err(why.to_string());
+            .unwrap_or("Claude declined this one.")
+            .to_string();
+        return Err(why);
     }
 
     let Some(blocks) = response.get("content").and_then(Value::as_array).cloned() else {
-        chat.pop();
+        chat.rollback();
         return Err("Unexpected API response.".into());
     };
 
     // Store the whole content — tool_use / tool_result blocks included — so the
     // next turn has the right context.
-    chat.push(json!({ "role": "assistant", "content": blocks.clone() }));
+    chat.commit(json!({ "role": "assistant", "content": blocks.clone() }));
 
     let text = blocks
         .iter()
@@ -199,40 +150,6 @@ async fn call(key: &str, body: &Value) -> Result<Value, String> {
         return Err(format!("Claude API {status}: {detail}"));
     }
     serde_json::from_str(&text).map_err(|e| format!("Bad API response: {e}"))
-}
-
-/// PDF → document block, image → image block, text/code → inline text.
-/// Mirrors readFileAsBlock() in ClaudeService.swift.
-fn file_block(path: &str) -> Option<Value> {
-    let ext = std::path::Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-
-    let media_type = match ext.as_str() {
-        "pdf" => Some(("document", "application/pdf")),
-        "jpg" | "jpeg" => Some(("image", "image/jpeg")),
-        "png" => Some(("image", "image/png")),
-        "gif" => Some(("image", "image/gif")),
-        "webp" => Some(("image", "image/webp")),
-        _ => None,
-    };
-
-    if let Some((block_type, media)) = media_type {
-        let bytes = std::fs::read(path).ok()?;
-        return Some(json!({
-            "type": block_type,
-            "source": { "type": "base64", "media_type": media, "data": base64(&bytes) },
-        }));
-    }
-
-    let len = std::fs::metadata(path).ok()?.len();
-    if len > MAX_INLINE_TEXT {
-        return None;
-    }
-    let text = std::fs::read_to_string(path).ok()?;
-    Some(json!({ "type": "text", "text": format!("File contents:\n{text}") }))
 }
 
 /// Small standalone base64 encoder — not worth another dependency.

@@ -91,6 +91,7 @@ Click the Montes icon in the system tray → **Settings…**
 |---|---|---|
 | **Claude Code hooks** | live sessions and approvals | **Install hooks** — Montes backs up `~/.claude/settings.json`, merges its hooks and shows you the diff before writing anything |
 | **Anthropic API key** | chat and questions about files | Settings → Claude · Windows Credential Manager |
+| **Ollama** | the same chat, on your own machine and for free | Settings → Assistant — optional; without a key Montes uses it automatically |
 | **Агенты** | extra agents with their own names and hook events | their settings merge into `~/.claude/settings.json` with `--agent <name>` |
 | Stripe, n8n, GitHub, Vercel, Resend, Notion, Cal.com | the service pills | Windows Credential Manager, all optional |
 
@@ -123,8 +124,9 @@ A [Tauri 2](https://tauri.app) app (Rust + TypeScript):
   click, then answers the hook. A hook that finds no Montes exits cleanly
   immediately.
 - **Integrations**: lightweight pollers, paused when nothing is watching.
-- **Claude chat**: Anthropic's Messages API, your key, web search on the server
-  side.
+- **Chat**: Anthropic's Messages API with your key and server-side web search — or
+  a model on your own machine through Ollama, chosen automatically when there is
+  no key.
 
 Details in [`windows/README.md`](windows/README.md).
 

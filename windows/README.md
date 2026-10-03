@@ -64,8 +64,20 @@ pill, and `PermissionRequest` is left out — approvals only work for Claude Cod
 Credential Manager**, never on disk and never in the interface — the island can
 only ask whether a key exists. Same for every integration key.
 
+**Settings… → Assistant** chooses who answers the chat. By default the rule is
+dull on purpose: an API key means Claude, no key means a model running on your own
+machine through **Ollama**, so a fresh install has an assistant that works instead
+of one that asks for money. The section shows which one would answer right now and
+why, lists what Ollama has installed and marks which of those models can actually
+look at a picture. Either back end can be pinned by hand.
+
+Two things differ between them, and the app says so rather than guessing: a local
+model has no web search, and a text-only model cannot read a window you drop on
+the island. Switching back ends starts a new conversation, because the two keep
+history in shapes the other cannot read.
+
 No telemetry. The only network requests Montes makes are to the services you
-configure yourself.
+configure yourself — and with Ollama, nothing leaves the machine at all.
 
 ## Build it yourself
 

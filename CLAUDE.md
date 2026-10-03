@@ -8,10 +8,11 @@ answer, chat and drop files without leaving what they're doing.
 ## Where things are
 - `windows/src-tauri/` — the Rust backend: the transparent island window
   (`platform/windows.rs`), the named pipe and approval flow (`pipe.rs`), the
-  Claude Code hooks manager and the extra-agent installer (`hooks.rs`), the
-  Claude chat (`claude.rs`), the seven service pollers (`integrations.rs`),
-  files inbox/ingest (`files.rs`), secrets in the Windows Credential Manager
-  (`secrets.rs`).
+  Claude Code hooks manager and the extra-agent installer (`hooks.rs`), the chat
+  and its provider rule (`chat.rs`), the two back ends it dispatches to
+  (`claude.rs` for the Anthropic API, `ollama.rs` for a model on the user's own
+  machine), the seven service pollers (`integrations.rs`), files inbox/ingest
+  (`files.rs`), secrets in the Windows Credential Manager (`secrets.rs`).
 - `windows/hook/` — `montes-hook.exe`, the tiny relay Claude Code runs on every
   hook event. Never blocks Claude Code.
 - `windows/src/` — the front end (TypeScript, no framework):
@@ -94,4 +95,7 @@ They do not run on the GNU target: the binaries die at startup with
   unless explicitly asked.
 - Pill IDs are stable contract values (Credential Manager, settings, hook
   routing): never rename an existing pill ID.
+- The provider rule belongs to Rust: `chat::resolve` decides who answers and
+  explains why, and the settings window shows that answer. Never let the front end
+  reimplement the rule.
 - New views follow the existing app style.

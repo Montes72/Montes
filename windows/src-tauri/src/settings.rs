@@ -36,6 +36,18 @@ pub struct Settings {
     /// Defaulted explicitly so a settings.json written by an older build still loads.
     #[serde(default = "default_model")]
     pub model: String,
+    /// Which back end answers: "auto" (a key means Claude, no key means Ollama),
+    /// or a name the user pinned. Anything unrecognised is treated as "auto",
+    /// because refusing to chat over an unknown string would be worse.
+    #[serde(default = "default_provider")]
+    pub provider: String,
+    /// Where Ollama listens. Normalised before every request, so "localhost:11434"
+    /// without a scheme works.
+    #[serde(default = "default_ollama_url")]
+    pub ollama_url: String,
+    /// Which installed model to use.
+    #[serde(default = "default_ollama_model")]
+    pub ollama_model: String,
     /// Extra agents wired to the relay (see `Agent`). Empty for a fresh install.
     #[serde(default)]
     pub agents: Vec<Agent>,
@@ -43,6 +55,18 @@ pub struct Settings {
 
 fn default_model() -> String {
     crate::claude::DEFAULT_MODEL.to_string()
+}
+
+fn default_provider() -> String {
+    "auto".to_string()
+}
+
+fn default_ollama_url() -> String {
+    crate::ollama::DEFAULT_URL.to_string()
+}
+
+fn default_ollama_model() -> String {
+    crate::ollama::DEFAULT_MODEL.to_string()
 }
 
 impl Default for Settings {
@@ -62,6 +86,9 @@ impl Default for Settings {
             autostart: false,
             hooks_installed: false,
             model: default_model(),
+            provider: default_provider(),
+            ollama_url: default_ollama_url(),
+            ollama_model: default_ollama_model(),
             agents: Vec::new(),
         }
     }

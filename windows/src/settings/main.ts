@@ -3,7 +3,7 @@
 // integrations land here too in a later stage.
 
 import "./settings.css";
-import { Bridge, onEvent, type HookStatus } from "../core/bridge";
+import { Bridge, onEvent, type HookStatus, type OllamaModelInfo } from "../core/bridge";
 import { DEFAULT_SETTINGS, type Agent, type Settings } from "../core/state";
 import { h, clear } from "../views/dom";
 
@@ -479,6 +479,171 @@ function apiSection(hasKey: boolean): HTMLElement {
   );
 }
 
+// ── Assistant section ─────────────────────────────────────────────────────────
+//
+// Which back end answers the chat. Rust owns the rule — an API key means Claude,
+// no key means Ollama — and this section shows its answer rather than repeating
+// it, so "automatic" can never quietly disagree with the app.
+
+const PROVIDERS: [Settings["provider"], string][] = [
+  ["auto", "Automatic — Claude with a key, Ollama without"],
+  ["claude", "Claude (Anthropic API)"],
+  ["ollama", "Ollama (on this machine)"],
+];
+
+function gb(sizeBytes: number): string {
+  if (!sizeBytes) return "";
+  const gb = sizeBytes / 1024 ** 3;
+  return gb >= 1 ? ` · ${gb.toFixed(1)} GB` : ` · ${Math.round(sizeBytes / 1024 ** 2)} MB`;
+}
+
+function assistantSection(): HTMLElement {
+  const body = h("div", { style: "display:flex;flex-direction:column;gap:12px" });
+  const section = h("section", {}, h("h2", {}, h("span", { text: "Assistant" })), body);
+  const verdict = h("div", { class: "hint" });
+
+  const pick = h("select", { style: "flex:1 1 auto;min-width:0" }) as HTMLSelectElement;
+  for (const [value, label] of PROVIDERS) pick.append(h("option", { value, text: label }));
+  pick.value = settings.provider;
+  pick.addEventListener("change", () => {
+    settings.provider = pick.value as Settings["provider"];
+    void save().then(draw);
+  });
+
+  const url = h("input", {
+    type: "text", spellcheck: "false", autocomplete: "off",
+    placeholder: "http://localhost:11434",
+    style: "flex:1 1 auto;min-width:0",
+  }) as HTMLInputElement;
+  url.value = settings.ollamaUrl;
+  url.addEventListener("change", () => {
+    settings.ollamaUrl = url.value.trim();
+    void save().then(draw);
+  });
+
+  const model = h("select", { style: "flex:1 1 auto;min-width:0" }) as HTMLSelectElement;
+  const scan = h("button", { text: "Find models" });
+  const modelsHint = h("div", { class: "hint" });
+  let models: OllamaModelInfo[] = [];
+  /** The list is asked for once by itself; the button is for asking again. */
+  let scanned = false;
+  /**
+   * True only once a listing has actually arrived. Before that, calling a model
+   * "not installed" would be a guess — the honest word is that nobody has looked.
+   */
+  let listed = false;
+
+  model.addEventListener("change", () => {
+    settings.ollamaModel = model.value;
+    void save();
+    fillModelOptions();
+  });
+
+  function fillModelOptions() {
+    clear(model);
+    const chosen = settings.ollamaModel;
+    for (const m of models) {
+      model.append(h("option", {
+        value: m.name,
+        text: `${m.name}${m.vision ? " · sees pictures" : " · text only"}${gb(m.sizeBytes)}`,
+      }));
+    }
+    // A model that is configured but not installed still has to be selectable:
+    // it may be pulled while Montes is closed, and hiding it would leave the
+    // settings lying about what is configured.
+    if (chosen && !models.some((m) => m.name === chosen)) {
+      model.append(h("option", {
+        value: chosen,
+        text: listed ? `${chosen} · not installed` : chosen,
+      }));
+    }
+    model.value = chosen;
+    model.disabled = models.length === 0;
+  }
+
+  async function findModels() {
+    scan.disabled = true;
+    clear(modelsHint);
+    modelsHint.textContent = `Asking ${url.value.trim() || settings.ollamaUrl}…`;
+    try {
+      const found = await Bridge.ollamaModels(url.value.trim());
+      models = Array.isArray(found) ? found : [];
+      listed = true;
+      fillModelOptions();
+      modelsHint.textContent = models.length
+        ? `${models.length} model${models.length === 1 ? "" : "s"} installed. A text-only model cannot read a window you drop on the island.`
+        : "Ollama is answering, but nothing is installed. Pull one with `ollama pull qwen3:14b`.";
+    } catch (err) {
+      models = [];
+      listed = false;
+      fillModelOptions();
+      modelsHint.textContent = "";
+      modelsHint.append(h("div", {
+        class: "notice warn",
+        text: `Could not reach Ollama: ${String(err).replace(/^Error:\s*/, "")}`,
+      }));
+    } finally {
+      scan.disabled = false;
+    }
+  }
+  scan.addEventListener("click", () => void findModels());
+  fillModelOptions();
+
+  async function draw() {
+    pick.value = settings.provider;
+    url.value = settings.ollamaUrl;
+    const local = settings.provider === "ollama" || settings.provider === "auto";
+
+    clear(body);
+    body.append(
+      h("div", {
+        class: "hint",
+        text: "With no choice made, a saved API key means Claude and no key means the model on this machine — so the chat works on a fresh install instead of asking for money.",
+      }),
+      h("div", { class: "row" }, h("label", { text: "Answers" }), pick),
+    );
+
+    if (local) {
+      body.append(
+        h("div", { class: "row" }, h("label", { text: "Ollama at" }), url, scan),
+        h("div", { class: "row" }, h("label", { text: "Model" }), model),
+        modelsHint,
+      );
+      // Ollama answers on the loopback interface in milliseconds, so showing an
+      // empty, disabled dropdown and waiting to be asked would be the app making
+      // the user do its work.
+      if (!scanned) {
+        scanned = true;
+        void findModels();
+      }
+    }
+
+    // What would actually answer, as Rust decides it. An error here is the useful
+    // case: it is the sentence the island would show if you asked right now.
+    clear(verdict);
+    try {
+      const resolved = await Bridge.chatProvider();
+      // A missing answer is not an answer: showing the reason is the whole point
+      // of this line, so a null has to read as "nothing can answer" and not as an
+      // empty success.
+      if (!resolved) throw new Error("Nothing to answer right now.");
+      verdict.append(h("div", {
+        class: "notice ok",
+        text: `${resolved.automatic ? "Automatic" : "Pinned"}: ${resolved.note}`,
+      }));
+    } catch (err) {
+      verdict.append(h("div", {
+        class: "notice warn",
+        text: String(err).replace(/^Error:\s*/, ""),
+      }));
+    }
+    body.append(verdict);
+  }
+
+  void draw();
+  return section;
+}
+
 // ── Integrations section ──────────────────────────────────────────────────────
 
 interface IntegrationDef {
@@ -669,6 +834,7 @@ async function main() {
     claudeSection(status),
     agentsSection(),
     apiSection(hasKey),
+    assistantSection(),
     integrationsSection(present),
     generalSection(),
     h("div", {

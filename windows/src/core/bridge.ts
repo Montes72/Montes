@@ -94,6 +94,18 @@ export const Bridge = {
   chatSend: (query: string, context: ChatContext | null) =>
     callOrThrow<{ text: string }>("chat_send", { query, context }),
   chatReset: () => call<void>("chat_reset"),
+  /**
+   * Who would answer right now, and why. Rust owns the rule; the settings show
+   * its answer rather than repeating it.
+   */
+  chatProvider: () => callOrThrow<ResolvedProvider>("chat_provider"),
+  /**
+   * What Ollama has installed at `url`, and whether each model can look at a
+   * picture. `url` defaults to the saved one, and is passed as typed so an
+   * address can be tried before it is saved.
+   */
+  ollamaModels: (url?: string) =>
+    callOrThrow<OllamaModelInfo[]>("ollama_models", { url: url ?? null }),
   /** Copies a dropped file into the inbox. */
   ingestFile: (path: string) => callOrThrow<DroppedFile>("ingest_file", { path }),
   /**
@@ -132,6 +144,22 @@ export type ChatContext =
       /** Base64 PNG — what actually lets the model read the window. */
       image?: string;
     };
+
+/** Which back end the chat is on, and whether the user chose it. */
+export interface ResolvedProvider {
+  provider: "claude" | "ollama";
+  automatic: boolean;
+  /** Why that one, spelled out by Rust. */
+  note: string;
+}
+
+export interface OllamaModelInfo {
+  name: string;
+  sizeBytes: number;
+  /** False for a text-only model — the common case, and why a dropped window
+   *  cannot be read by it. */
+  vision: boolean;
+}
 
 export interface DroppedFile {
   name: string;

@@ -2,6 +2,67 @@
 
 ## Unreleased
 
+### Phase 8 — an assistant that runs on your own machine
+
+- **Ollama is a second back end for the chat.** With an Anthropic API key saved
+  the island still talks to Claude; without one it talks to the model running on
+  the user's own machine, so a fresh install has an assistant that works instead
+  of one that asks for money. The rule is deliberately dull — a key means Claude,
+  no key means Ollama — because anything cleverer would surprise somebody who has
+  deliberately removed a key to stop being billed. It can also be pinned to either
+  one in **Settings… → Assistant**.
+- **Settings… → Assistant** shows which back end would answer *right now*, with
+  the reason. Rust owns that rule and answers a `chat_provider` call; the window
+  shows the answer rather than reimplementing it, which is the only way
+  "automatic" can't quietly disagree with the app. The Ollama rows list what is
+  installed, fetched from `/api/tags`, and mark each model's real capability from
+  `/api/show` — a text-only model is labelled as such rather than being handed a
+  screenshot it would silently drop. The list asks for itself as soon as the rows
+  are on screen, because Ollama answers on the loopback interface in milliseconds
+  and making the user press a button for that would be the app doing its own work
+  badly. When nothing answers, the window says what is missing — no key and no
+  Ollama is a fresh install, and it gets told so rather than an empty dropdown.
+- The two back ends keep history in genuinely different shapes — Anthropic stores
+  typed blocks and may carry tool calls across turns, Ollama stores a text string
+  and a side array of pictures — so **switching back ends starts a new
+  conversation** instead of feeding one backend's syntax to the other, which is
+  the only behaviour that cannot produce nonsense.
+- `claude.rs` no longer owns the conversation: `chat.rs` holds the history, the
+  attachments and the provider rule, and each provider only translates what is
+  genuinely its own. Anthropic gets `document` and `image` blocks; Ollama gets the
+  same picture as a bare base64 string, and is told outright that a PDF is
+  something it cannot read rather than being sent the bytes as text.
+- Ollama asks for a **ten-minute** chat timeout instead of the API's 90 s — 30B
+  parameters on a laptop CPU need minutes, and reusing the API's budget cut off
+  every long answer. Measured on a laptop with `qwen3:14b`: a cold first question
+  took **95 s**, which the API's budget would have cut off — and keeps the model
+  loaded for 10 minutes, because reloading a 17 GB model between questions is not
+  a cache being trimmed.
+- A **thinking model that spends its whole budget thinking** is told what
+  happened instead of returning an empty answer. qwen3 and its relatives think
+  before they reply and the thinking counts against the same `num_predict`, so a
+  truncated answer is genuinely empty — Montes says so, and says what to do,
+  rather than showing "no response text".
+- A recent Ollama says what each model can do **in `/api/tags` itself**, so the
+  capability is taken from the listing when it is there and only asked again per
+  model on an older server. Verified against Ollama 0.35: `qwen3-coder:30b` and
+  `qwen3:14b` both report `completion, tools` and no `vision`, which is exactly
+  why the dropped-window feature refuses them by name.
+- A dropped window is checked against the model's capabilities *before* the
+  request goes out, so a text-only model is refused with an explanation instead of
+  answering as if it had seen the picture.
+
+### Fix — the question never reached the model
+
+- Splitting the chat into `chat.rs` and the two providers introduced a bug that
+  compiled and looked right: the request was built from a history snapshot taken
+  **before** the user's turn was recorded, so every request carried the
+  conversation *minus* the question — and the model answered it with complete
+  confidence and total nonsense. `Chat::turn` now records the question and returns
+  what the request must carry in one step, so no provider can send a history that
+  has not caught up with it, and `Chat::begin` reports whether this is the first
+  turn instead of handing out a snapshot to hold on to.
+
 ### Phase 0 — fork and cleanup
 
 - Forked [coucou](https://github.com/Louis-CFM/coucou) (MIT) and renamed it

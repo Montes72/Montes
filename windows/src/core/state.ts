@@ -115,9 +115,20 @@ export interface Settings {
   hooksInstalled: boolean;
   /** Claude model used by the chat. */
   model: string;
+  /**
+   * Who answers the chat: "auto" (an API key means Claude, no key means Ollama),
+   * or a back end the user pinned.
+   */
+  provider: ProviderPreference;
+  /** Where Ollama listens. Normalised before every request. */
+  ollamaUrl: string;
+  /** Which installed Ollama model to use. */
+  ollamaModel: string;
   /** Extra agents wired to the montes-hook relay (see docs/AGENTS.md). */
   agents: Agent[];
 }
+
+export type ProviderPreference = "auto" | "claude" | "ollama";
 
 /** One extra agent: a name, its own JSON hook config, and the events it reports. */
 export interface Agent {
@@ -141,6 +152,9 @@ export const DEFAULT_SETTINGS: Settings = {
   autostart: false,
   hooksInstalled: false,
   model: "claude-opus-5",
+  provider: "auto",
+  ollamaUrl: "http://localhost:11434",
+  ollamaModel: "qwen3:14b",
   agents: [],
 };
 
