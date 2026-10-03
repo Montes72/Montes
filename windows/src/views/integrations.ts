@@ -8,16 +8,19 @@ import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
 import { State, type AgentTask } from "../core/state";
 import { Bridge } from "../core/bridge";
+import { t } from "../core/i18n";
 
 /** Same shape as the Swift `timeAgo` computed properties. */
 export function timeAgo(value: unknown): string {
   const date = typeof value === "number" ? new Date(value) : new Date(String(value));
   const diff = (Date.now() - date.getTime()) / 1000;
   if (!Number.isFinite(diff)) return "";
-  if (diff < 60) return "just now";
-  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
-  return `${Math.floor(diff / 86400)}d`;
+  // The units are words, not data: "5m" is a number in English and "5 мин" in
+  // Russian, and the units are the only part a person reads.
+  if (diff < 60) return t("just now");
+  if (diff < 3600) return t("{n} min", { n: Math.floor(diff / 60) });
+  if (diff < 86400) return t("{n} h", { n: Math.floor(diff / 3600) });
+  return t("{n} d", { n: Math.floor(diff / 86400) });
 }
 
 function header(color: string, name: string, kind: string, extra?: Node): HTMLElement {
@@ -59,8 +62,12 @@ function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
   const error = info?.error ?? null;
   // The Claude Code pill is about hooks, not a key — the macOS wording would be
   // misleading here.
-  const missing = task.id === "integration_claude" ? "Hooks not installed" : "Key not configured";
-  const label = error ?? (configured ? "Connected · loading…" : missing);
+  // Translated where it is chosen: `error` is what the back end said, and that
+  // stays English, so the whole label cannot go through the DOM's translation
+  // pass — it would be a mix of two languages.
+  const missing =
+    task.id === "integration_claude" ? t("Hooks not installed") : t("Key not configured");
+  const label = error ?? (configured ? t("Connected · loading…") : missing);
   const statusColor = error || !configured ? "#F4505E" : "#22C55E";
 
   const actions = h("div", { class: "int-actions" });
@@ -87,7 +94,7 @@ function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
       h("button", {
         class: "link-btn",
         style: `color:${task.color}d9`,
-        text: `Open ${task.name}`,
+        text: t("Open {name}", { name: task.name }),
         onclick: () => void Bridge.openUrl(OPEN_URLS[task.id]),
       }),
     );
@@ -148,7 +155,7 @@ function vercelDetail(onBack: () => void): HTMLElement {
   if (d.commitMessage) body.append(h("div", { class: "int-commit", text: String(d.commitMessage) }));
   const meta = h("div", { class: "int-meta" });
   if (d.branch) meta.append(h("span", { text: String(d.branch) }));
-  meta.append(h("span", { text: `${timeAgo(d.createdAt)} ago` }));
+  meta.append(h("span", { text: t("{t} ago", { t: timeAgo(d.createdAt) }) }));
   body.append(meta);
   if (d.url) {
     body.append(

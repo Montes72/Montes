@@ -16,8 +16,9 @@ import { Greeting } from "../mochi/greeting";
 import { createMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from "../mochi/minibots";
 import { UploadCanvas } from "../upload/canvas";
 import { USC, UploadSeq } from "../upload/sequence";
-import { buildHeader, buildViews, type ViewActions, type ViewHost } from "../views/views";
-import { h } from "../views/dom";
+import { buildChrome, type ViewActions, type ViewHost } from "../views/views";
+import { applyLanguage, language } from "../core/i18n";
+import { clear, h } from "../views/dom";
 import { IslandStateMachine } from "./fsm";
 
 const BOT_OVERHANG = 40;
@@ -124,6 +125,9 @@ export class Island {
 
   // ── DOM ─────────────────────────────────────────────────────────────────────
 
+  /** Kept because a language change has to build the views again. */
+  private actions!: ViewActions;
+
   private build() {
     const actions: ViewActions = {
       setView: (v) => this.setView(v),
@@ -192,6 +196,7 @@ export class Island {
       askAboutWindow: () => this.askAboutWindow(),
       blip: () => Sound.play("blip"),
     };
+    this.actions = actions;
 
     this.wakeStrip = h("div", { id: "wake-strip" });
     this.botGlow = h("div", { id: "bot-glow" });
@@ -199,12 +204,9 @@ export class Island {
     this.greetingCanvas = h("canvas", { id: "greeting-canvas" });
     this.miniGrid = h("div", { id: "mini-grid" });
     this.countdown = h("div", { id: "countdown" });
+    this.contentEl = h("div", { id: "content" });
 
-    this.header = buildHeader(actions);
-    this.views = buildViews(actions, () => this.animateGeometry(false));
-    this.viewsEl = h("div", { id: "views" });
-    for (const v of this.views.values()) this.viewsEl.append(v.el);
-    this.contentEl = h("div", { id: "content" }, this.header.el, this.viewsEl);
+    this.mountChrome();
 
     // The drop sequence draws the card, the bar and its own Montes. It sits under
     // the header, which stays visible on top of it exactly as on macOS.
@@ -1004,8 +1006,32 @@ export class Island {
     this.engine.setState(State.effectiveState);
   }
 
-  /** Applies settings coming from Rust at boot. */
+  /**
+   * Builds the header, the views and the wrapper they sit in.
+   *
+   * Kept apart from the rest of `build()` because changing the language has to
+   * run it again: a view bakes its sentences in when it is built, so a rebuilt
+   * view is the only way the buttons and titles follow the language the dynamic
+   * lines already moved to.
+   */
+  private mountChrome() {
+    const built = buildChrome(this.actions, () => this.animateGeometry(false));
+    this.header = built.header;
+    this.views = built.views;
+    // The wrapper itself is kept: it is already in the tree and carries the
+    // opacity the open/close animation sets on it, so replacing the wrapper
+    // would drop the island out of its own transition.
+    this.contentEl ??= h("div", { id: "content" });
+    clear(this.contentEl);
+    this.contentEl.append(...built.children);
+    this.viewsEl = this.contentEl.querySelector("#views") as HTMLElement;
+  }
+
+  /** Applies settings coming from Rust at boot and whenever they change. */
   applySettings() {
+    const before = language();
+    applyLanguage(State.settings.language);
+    if (language() !== before) this.mountChrome();
     Sound.setEnabled(State.settings.soundEnabled);
     Sound.setVolume(State.settings.soundVolume);
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;

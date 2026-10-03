@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::claude;
+use crate::i18n;
 use crate::ollama;
 use crate::secrets;
 use crate::settings::Settings;
@@ -59,7 +60,7 @@ pub async fn resolve(settings: &Settings) -> Result<ResolvedProvider, String> {
         "claude" => Ok(()),
         _ => ollama::probe(&url).await,
     };
-    decide(&settings.provider, has_key, &url, local)
+    decide(&settings.provider, has_key, &url, local, &settings.language)
 }
 
 /// The rule itself, with everything it needs already in hand.
@@ -67,48 +68,78 @@ pub async fn resolve(settings: &Settings) -> Result<ResolvedProvider, String> {
 /// Split out from `resolve` so it can be tested without a credential manager or a
 /// socket: "a key means Claude, no key means the local model" is the whole promise
 /// of this feature, and it is worth a test that cannot be moved by a network.
+///
+/// The language comes in rather than being read from the settings file, so the
+/// tests below can state the language they are about instead of depending on
+/// whatever the machine running them has saved.
 fn decide(
     preference: &str,
     has_key: bool,
     url: &str,
     local: Result<(), String>,
+    lang: &str,
 ) -> Result<ResolvedProvider, String> {
+    // These sentences are read on the Assistant card and in the island, so they are
+    // translated like any other interface line. The `{url}` hole stays a hole so
+    // the table has one line per sentence and the front end can show the address
+    // the user typed, unchanged.
     match preference {
         "claude" => {
             if !has_key {
-                return Err("No Anthropic API key. Save one in Settings, or let the assistant \
-                            choose for you."
-                    .to_string());
+                return Err(i18n::t_in(
+                    lang,
+                    "No Anthropic API key. Save one in Settings, or let the assistant choose for you.",
+                ));
             }
             Ok(ResolvedProvider {
                 provider: Provider::Claude,
                 automatic: false,
-                note: "Claude, because you chose it.".to_string(),
+                note: i18n::t_in(lang, "Claude, because you chose it."),
             })
         }
         "ollama" => local
             .map(|()| ResolvedProvider {
                 provider: Provider::Ollama,
                 automatic: false,
-                note: format!("Ollama at {url}, because you chose it."),
+                note: i18n::tf_in(
+                    lang,
+                    "Ollama at {url}, because you chose it.",
+                    "url",
+                    url,
+                ),
             })
-            .map_err(|e| format!("Ollama is not answering at {url}. {e}")),
+            .map_err(|e| {
+                // The address is in the sentence and the failure reason quotes the
+                // request verbatim, so only the frame around it is translated.
+                format!(
+                    "{} {}",
+                    i18n::tf_in(lang, "Ollama is not answering at {url}.", "url", url),
+                    e
+                )
+            }),
         // "auto", and anything a newer build wrote that this one has never heard of.
         _ if has_key => Ok(ResolvedProvider {
             provider: Provider::Claude,
             automatic: true,
-            note: "Claude — an Anthropic API key is saved.".to_string(),
+            note: i18n::t_in(lang, "Claude — an Anthropic API key is saved."),
         }),
         _ => local
             .map(|()| ResolvedProvider {
                 provider: Provider::Ollama,
                 automatic: true,
-                note: format!("Ollama at {url} — there is no Anthropic API key."),
+                note: i18n::tf_in(
+                    lang,
+                    "Ollama at {url} — there is no Anthropic API key.",
+                    "url",
+                    url,
+                ),
             })
             .map_err(|_| {
-                format!(
-                    "Nothing can answer yet: there is no Anthropic API key, and Ollama did \
-                     not answer at {url}. Start Ollama, or save a key here."
+                i18n::tf_in(
+                    lang,
+                    "Nothing can answer yet: there is no Anthropic API key, and Ollama did not answer at {url}. Start Ollama, or save a key here.",
+                    "url",
+                    url,
                 )
             }),
     }
@@ -336,16 +367,22 @@ mod tests {
     }
 
     // ── Who answers ───────────────────────────────────────────────────────────
+    //
+    // English throughout: these are about which back end answers, and a test
+    // that read the operator's own settings would fail on a Russian machine for
+    // a reason that has nothing to do with the rule. The Russian wording has its
+    // own test at the bottom.
+    const EN: &str = "en";
 
     #[test]
     fn a_key_means_claude_and_no_key_means_the_machine() {
         // The whole feature in two lines. Anything cleverer here would surprise
         // somebody who removed a key on purpose to stop being billed.
-        let with_key = decide("auto", true, "http://localhost:11434", DOWN).unwrap();
+        let with_key = decide("auto", true, "http://localhost:11434", DOWN, EN).unwrap();
         assert_eq!(with_key.provider, Provider::Claude);
         assert!(with_key.automatic);
 
-        let without = decide("auto", false, "http://localhost:11434", UP).unwrap();
+        let without = decide("auto", false, "http://localhost:11434", UP, EN).unwrap();
         assert_eq!(without.provider, Provider::Ollama);
         assert!(without.automatic);
     }
@@ -353,7 +390,7 @@ mod tests {
     #[test]
     fn nothing_to_answer_with_is_said_in_one_sentence() {
         // The failure has to name both ways out, because both are one click away.
-        let err = decide("auto", false, "http://localhost:11434", DOWN).unwrap_err();
+        let err = decide("auto", false, "http://localhost:11434", DOWN, EN).unwrap_err();
         assert!(err.contains("no Anthropic API key"), "{err}");
         assert!(err.contains("http://localhost:11434"), "{err}");
         assert!(err.contains("Start Ollama"), "{err}");
@@ -361,23 +398,24 @@ mod tests {
 
     #[test]
     fn a_pinned_back_end_is_never_the_automatic_one() {
-        let claude = decide("claude", true, "http://localhost:11434", DOWN).unwrap();
+        let claude = decide("claude", true, "http://localhost:11434", DOWN, EN).unwrap();
         assert_eq!(claude.provider, Provider::Claude);
         assert!(!claude.automatic, "the user chose it, so it is not automatic");
 
-        let ollama = decide("ollama", true, "http://localhost:11434", UP).unwrap();
+        let ollama = decide("ollama", true, "http://localhost:11434", UP, EN).unwrap();
         assert_eq!(ollama.provider, Provider::Ollama, "a key does not overrule a pin");
         assert!(!ollama.automatic);
     }
 
     #[test]
     fn pinning_something_that_cannot_answer_says_which_one() {
-        let no_key = decide("claude", false, "http://localhost:11434", UP).unwrap_err();
+        let no_key = decide("claude", false, "http://localhost:11434", UP, EN).unwrap_err();
         assert!(no_key.contains("No Anthropic API key"), "{no_key}");
 
         // Ollama's own words about why, kept in the sentence rather than dropped.
-        let refused = decide("ollama", true, "http://localhost:11434", Err("connection refused".into()))
-            .unwrap_err();
+        let refused =
+            decide("ollama", true, "http://localhost:11434", Err("connection refused".into()), EN)
+                .unwrap_err();
         assert!(refused.contains("http://localhost:11434"), "{refused}");
         assert!(refused.contains("connection refused"), "{refused}");
     }
@@ -386,9 +424,36 @@ mod tests {
     fn a_preference_from_a_newer_build_falls_back_to_the_rule() {
         // Refusing to chat over an unrecognised string would be worse than
         // ignoring it.
-        let resolved = decide("gemini", true, "http://localhost:11434", DOWN).unwrap();
+        let resolved = decide("gemini", true, "http://localhost:11434", DOWN, EN).unwrap();
         assert_eq!(resolved.provider, Provider::Claude);
         assert!(resolved.automatic);
+    }
+
+    #[test]
+    fn russian_says_the_same_thing_about_the_same_state() {
+        // The rule must not change with the language: what answers, and why, is
+        // the same answer in Russian. Only the words move.
+        let en = decide("auto", true, "http://box:11434", DOWN, "en").unwrap();
+        let ru = decide("auto", true, "http://box:11434", DOWN, "ru").unwrap();
+        assert_eq!(en.provider, ru.provider);
+        assert_eq!(en.automatic, ru.automatic);
+        assert_ne!(en.note, ru.note, "a language that changed nothing is not a translation");
+
+        // The sentence that has an address in it keeps the address it was given.
+        let en = decide("ollama", true, "http://box:11434", UP, "en").unwrap();
+        let ru = decide("ollama", true, "http://box:11434", UP, "ru").unwrap();
+        assert!(ru.note.contains("http://box:11434"), "{ru:?}");
+        assert_eq!(en.provider, ru.provider);
+        assert!(!ru.automatic, "the pin survives the translation");
+
+        // And the failure that names both ways out still names both of them.
+        let err = decide("auto", false, "http://box:11434", DOWN, "ru").unwrap_err();
+        assert!(err.contains("http://box:11434"), "{err}");
+        assert!(!err.contains("{url}"), "a hole reached the screen: {err}");
+
+        // A language nobody speaks is English, never a blank note.
+        let unknown = decide("auto", true, "http://box:11434", DOWN, "klingon").unwrap();
+        assert_eq!(unknown.note, decide("auto", true, "http://box:11434", DOWN, "en").unwrap().note);
     }
 
     // ── History ───────────────────────────────────────────────────────────────

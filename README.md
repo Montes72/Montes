@@ -35,8 +35,9 @@ Montes; nothing from the original's assets is shipped (see «Assets» below).
 - 🤖 **Claude Code sessions, live** — see what your session reads, edits and
   runs, step by step. Tag a hook payload with `montes_agent` to give any other
   agent its own pill (see [`docs/AGENTS.md`](docs/AGENTS.md)).
-- ✅ **Approve from the island** — Claude Code permission requests show up with
-  **Allow / Deny**. One click, back to work. Works from any terminal.
+- ✅ **Approve from the island** — permission requests show up with
+  **Allow / Deny**. One click, back to work. Works from any terminal, and for any
+  agent that can wait on the hook's stdout — Claude Code, opencode, or your own.
 - 💬 **Chat with Claude** — right from the island, with your own Anthropic key.
 - 📎 **Drop a file on the island** — Montes turns into a box, swallows it, then
   answers questions about it.
@@ -51,6 +52,9 @@ Montes; nothing from the original's assets is shipped (see «Assets» below).
   emotes, sounds, a greeting on launch.
 - 🫥 **Invisible when idle** — hides away when nothing is running, peeks out
   when you hover the very top of the screen.
+- 🗣 **English or Russian** — the whole app, both windows and the tray. A fresh
+  install follows the language Windows is set to; change it in
+  **Settings… → General** and it switches at once.
 - 🔒 **Private by design** — no telemetry, no account. Keys live in the Windows
   Credential Manager. The app only talks to the services you plug in.
 

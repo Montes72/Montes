@@ -5,6 +5,7 @@ mod chat;
 mod claude;
 mod files;
 mod hooks;
+mod i18n;
 mod integrations;
 mod island;
 mod log;
@@ -67,15 +68,22 @@ fn boot(app: AppHandle, shared: State<Shared>) -> BootInfo {
 
 #[tauri::command]
 fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
-    let (screen_changed, autostart_changed) = {
+    let (screen_changed, autostart_changed, language_changed) = {
         let mut current = shared.settings.lock().unwrap();
         let screen_changed = current.screen != settings.screen;
         let autostart_changed = current.autostart != settings.autostart;
+        let language_changed = current.language != settings.language;
         *current = settings.clone();
-        (screen_changed, autostart_changed)
+        (screen_changed, autostart_changed, language_changed)
     };
     if let Err(err) = settings::save(&settings) {
         eprintln!("[montes] could not save settings: {err}");
+    }
+    // The tray menu's text is fixed when its items are made, so a new language
+    // means a new menu. Checked after the save, because that is what the menu
+    // should describe.
+    if language_changed {
+        tray::relabel(&app);
     }
     if autostart_changed {
         let manager = app.autolaunch();

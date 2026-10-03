@@ -10,6 +10,7 @@
 import { h, svg } from "./dom";
 import { ICONS } from "./icons";
 import { cubicBezier, clamp, lerp } from "../core/anim";
+import { t } from "../core/i18n";
 import type { AgentTask } from "../core/state";
 
 const ROW_H = 22;
@@ -52,8 +53,11 @@ function makeRow(): Row {
 function setText(row: Row, text: string) {
   if (row.text === text) return;
   row.text = text;
-  row.shimmer.textContent = text;
-  row.dim.textContent = text;
+  // A step line is either a tool label the app knows or something the agent said;
+  // both are safe to pass through t(), which only rewrites what it has a
+  // translation for.
+  row.shimmer.textContent = t(text);
+  row.dim.textContent = t(text);
 }
 
 /**

@@ -4,6 +4,7 @@
 
 import "./settings.css";
 import { Bridge, onEvent, type HookStatus, type OllamaModelInfo, type OpencodeStatus } from "../core/bridge";
+import { applyLanguage, language, t, LANGUAGES } from "../core/i18n";
 import { DEFAULT_SETTINGS, type Agent, type Settings } from "../core/state";
 import { h, clear } from "../views/dom";
 
@@ -98,7 +99,7 @@ function claudeSection(status: HookStatus): HTMLElement {
     // every Claude Code session a broken hook and nothing to show for it.
     if (!status.hookReady) {
       install.disabled = true;
-      install.title = "The relay isn't installed yet.";
+      install.title = t("The relay isn't installed yet.");
     }
     actions.append(install);
     if (status.installed) {
@@ -139,7 +140,7 @@ function claudeSection(status: HookStatus): HTMLElement {
       }),
       renderDiff(preview.diff),
       h("div", { class: "row" },
-        h("span", { class: "path", text: `Backup → ${preview.backup}` }),
+        h("span", { class: "path", text: t("Backup → {path}", { path: preview.backup }) }),
       ),
     );
     const confirm = h("button", {
@@ -153,12 +154,15 @@ function claudeSection(status: HookStatus): HTMLElement {
         clear(body);
         body.append(h("div", {
           class: "notice ok",
-          text: `Done. Previous settings saved as ${backup}. Open a new Claude Code session to pick the hooks up.`,
+          text: t(
+            "Done. Previous settings saved as {backup}. Open a new Claude Code session to pick the hooks up.",
+            { backup },
+          ),
         }));
         window.setTimeout(() => void rebuild(), 2600);
       } catch (err) {
         confirm.disabled = false;
-        body.append(h("div", { class: "notice err", text: `Could not write: ${String(err)}` }));
+        body.append(h("div", { class: "notice err", text: t("Could not write: {err}", { err: String(err) }) }));
       }
     });
     body.append(h("div", { class: "row" }, confirm, h("button", {
@@ -227,19 +231,22 @@ function agentsSection(): HTMLElement {
     async function refresh() {
       state = await Bridge.opencodeStatus();
       dot.style.background = state?.installed ? "#22c55e" : "#f4505e";
-      if (!state) statusText.textContent = "Could not ask the app about it.";
+      if (!state) statusText.textContent = t("Could not ask the app about it.");
       else if (state.foreign) {
-        statusText.textContent = `There is a file at ${state.pluginPath} that Montes did not write. It is left alone — move it aside if you want ours there.`;
+        statusText.textContent = t(
+          "There is a file at {path} that Montes did not write. It is left alone — move it aside if you want ours there.",
+          { path: state.pluginPath },
+        );
       } else if (state.installed) {
-        statusText.textContent = `Plugin in place at ${state.pluginPath}.`;
+        statusText.textContent = t("Plugin in place at {path}.", { path: state.pluginPath });
       } else {
         statusText.textContent = state?.hookReady
-          ? `Not installed. It goes to ${state.pluginPath}.`
-          : "The relay is missing, so nothing would reach Montes. Reinstall Montes first.";
+          ? t("Not installed. It goes to {path}.", { path: state.pluginPath })
+          : t("The relay is missing, so nothing would reach Montes. Reinstall Montes first.");
       }
       const has = state?.installed || state?.foreign;
       uninstall.style.display = has ? "" : "none";
-      install.textContent = state?.installed ? "Reinstall…" : "Install…";
+      install.textContent = state?.installed ? t("Reinstall…") : t("Install…");
       install.style.display = state?.foreign ? "none" : "";
     }
     void refresh();
@@ -272,11 +279,13 @@ function agentsSection(): HTMLElement {
       h("div", {
         class: "hint",
         text: install
-          ? `This is exactly what will be written to ${preview.settingsPath}. It is the whole plugin — read it, because it runs inside opencode.`
-          : `This removes ${preview.settingsPath} and nothing else.`,
+          ? t("This is exactly what will be written to {path}. It is the whole plugin — read it, because it runs inside opencode.", {
+              path: preview.settingsPath,
+            })
+          : t("This removes {path} and nothing else.", { path: preview.settingsPath }),
       }),
       renderDiff(preview.diff),
-      h("div", { class: "row" }, h("span", { class: "path", text: `Backup → ${preview.backup}` })),
+      h("div", { class: "row" }, h("span", { class: "path", text: t("Backup → {path}", { path: preview.backup }) })),
     );
     const confirm = h("button", {
       class: install ? "primary" : "danger",
@@ -290,13 +299,13 @@ function agentsSection(): HTMLElement {
         body.append(h("div", {
           class: "notice ok",
           text: install
-            ? `Done. Previous file saved as ${backup}. Start a new opencode session — it loads plugins at startup.`
-            : `Done. Previous file saved as ${backup}.`,
+            ? t("Done. Previous file saved as {backup}. Start a new opencode session — it loads plugins at startup.", { backup })
+            : t("Done. Previous file saved as {backup}.", { backup }),
         }));
         window.setTimeout(() => { clear(body); void draw(); }, 2600);
       } catch (err) {
         confirm.disabled = false;
-        body.append(h("div", { class: "notice err", text: `Could not write: ${String(err)}` }));
+        body.append(h("div", { class: "notice err", text: t("Could not write: {err}", { err: String(err) }) }));
       }
     });
     body.append(h("div", { class: "row" }, confirm, h("button", {
@@ -367,10 +376,10 @@ function agentsSection(): HTMLElement {
       installed = status?.installed ?? false;
       dot.style.background = installed ? "#22c55e" : "#f4505e";
       statusText.textContent = installed
-        ? `Hooked into ${status?.settingsPath || agent.path}.`
-        : "No hooks installed for this agent yet.";
+        ? t("Hooked into {path}.", { path: status?.settingsPath || agent.path })
+        : t("No hooks installed for this agent yet.");
       uninstall.style.display = installed ? "" : "none";
-      install.textContent = installed ? "Reinstall…" : "Install…";
+      install.textContent = installed ? t("Reinstall…") : t("Install…");
     }
     void refreshStatus();
 
@@ -462,11 +471,13 @@ function agentsSection(): HTMLElement {
       h("div", {
         class: "hint",
         text: install
-          ? `This is exactly what will change in ${preview.settingsPath}. Other hooks in that file are left untouched.`
-          : `This removes ${agent.name}'s entries only. Other hooks are left untouched.`,
+          ? t("This is exactly what will change in {path}. Other hooks in that file are left untouched.", {
+              path: preview.settingsPath,
+            })
+          : t("This removes {name}'s entries only. Other hooks are left untouched.", { name: agent.name }),
       }),
       renderDiff(preview.diff),
-      h("div", { class: "row" }, h("span", { class: "path", text: `Backup → ${preview.backup}` })),
+      h("div", { class: "row" }, h("span", { class: "path", text: t("Backup → {path}", { path: preview.backup }) })),
     );
     const confirm = h("button", {
       class: install ? "primary" : "danger",
@@ -480,8 +491,11 @@ function agentsSection(): HTMLElement {
         body.append(h("div", {
           class: "notice ok",
           text: install
-            ? `Done. Previous settings saved as ${backup}. Start a new ${agent.name} session to pick the hooks up.`
-            : `Done. Previous settings saved as ${backup}.`,
+            ? t("Done. Previous settings saved as {backup}. Start a new {name} session to pick the hooks up.", {
+                backup,
+                name: agent.name,
+              })
+            : t("Done. Previous settings saved as {backup}.", { backup }),
         }));
         if (onDone) {
           onDone();
@@ -490,7 +504,7 @@ function agentsSection(): HTMLElement {
         window.setTimeout(() => { clear(body); void draw(); }, 2600);
       } catch (err) {
         confirm.disabled = false;
-        body.append(h("div", { class: "notice err", text: `Could not write: ${String(err)}` }));
+        body.append(h("div", { class: "notice err", text: t("Could not write: {err}", { err: String(err) }) }));
       }
     });
     body.append(h("div", { class: "row" }, confirm, h("button", {
@@ -530,9 +544,9 @@ function apiSection(hasKey: boolean): HTMLElement {
     const present = (await Bridge.secretPresent("anthropic-api-key")) ?? false;
     dot.style.background = present ? "#22c55e" : "#f4505e";
     state.textContent = present
-      ? "Key saved in the Windows Credential Manager."
-      : "No key yet — the chat needs one.";
-    field.placeholder = present ? "••••••••••••  (stored)" : "sk-ant-...";
+      ? t("Key saved in the Windows Credential Manager.")
+      : t("No key yet — the chat needs one.");
+    field.placeholder = present ? t("••••••••••••  (stored)") : "sk-ant-...";
     clearBtn.style.display = present ? "" : "none";
   }
 
@@ -546,7 +560,7 @@ function apiSection(hasKey: boolean): HTMLElement {
       feedback.append(h("div", { class: "notice ok", text: "Saved. It never touches disk." }));
       await refresh();
     } catch (err) {
-      feedback.append(h("div", { class: "notice err", text: `Could not save: ${String(err)}` }));
+      feedback.append(h("div", { class: "notice err", text: t("Could not save: {err}", { err: String(err) }) }));
     }
   });
 
@@ -557,7 +571,7 @@ function apiSection(hasKey: boolean): HTMLElement {
       feedback.append(h("div", { class: "notice ok", text: "Key removed." }));
       await refresh();
     } catch (err) {
-      feedback.append(h("div", { class: "notice err", text: `Could not remove: ${String(err)}` }));
+      feedback.append(h("div", { class: "notice err", text: t("Could not remove: {err}", { err: String(err) }) }));
     }
   });
 
@@ -651,7 +665,7 @@ function assistantSection(): HTMLElement {
     for (const m of models) {
       model.append(h("option", {
         value: m.name,
-        text: `${m.name}${m.vision ? " · sees pictures" : " · text only"}${gb(m.sizeBytes)}`,
+        text: `${m.name}${m.vision ? t(" · sees pictures") : t(" · text only")}${gb(m.sizeBytes)}`,
       }));
     }
     // A model that is configured but not installed still has to be selectable:
@@ -660,7 +674,7 @@ function assistantSection(): HTMLElement {
     if (chosen && !models.some((m) => m.name === chosen)) {
       model.append(h("option", {
         value: chosen,
-        text: listed ? `${chosen} · not installed` : chosen,
+        text: listed ? t("{model} · not installed", { model: chosen }) : chosen,
       }));
     }
     model.value = chosen;
@@ -670,15 +684,17 @@ function assistantSection(): HTMLElement {
   async function findModels() {
     scan.disabled = true;
     clear(modelsHint);
-    modelsHint.textContent = `Asking ${url.value.trim() || settings.ollamaUrl}…`;
+    modelsHint.textContent = t("Asking {url}…", { url: url.value.trim() || settings.ollamaUrl });
     try {
       const found = await Bridge.ollamaModels(url.value.trim());
       models = Array.isArray(found) ? found : [];
       listed = true;
       fillModelOptions();
       modelsHint.textContent = models.length
-        ? `${models.length} model${models.length === 1 ? "" : "s"} installed. A text-only model cannot read a window you drop on the island.`
-        : "Ollama is answering, but nothing is installed. Pull one with `ollama pull qwen3:14b`.";
+        ? t("{n} model(s) installed. A text-only model cannot read a window you drop on the island.", {
+            n: models.length,
+          })
+        : t("Ollama is answering, but nothing is installed. Pull one with `ollama pull qwen3:14b`.");
     } catch (err) {
       models = [];
       listed = false;
@@ -686,7 +702,7 @@ function assistantSection(): HTMLElement {
       modelsHint.textContent = "";
       modelsHint.append(h("div", {
         class: "notice warn",
-        text: `Could not reach Ollama: ${String(err).replace(/^Error:\s*/, "")}`,
+        text: t("Could not reach Ollama: {err}", { err: String(err).replace(/^Error:\s*/, "") }),
       }));
     } finally {
       scan.disabled = false;
@@ -735,7 +751,12 @@ function assistantSection(): HTMLElement {
       if (!resolved) throw new Error("Nothing to answer right now.");
       verdict.append(h("div", {
         class: "notice ok",
-        text: `${resolved.automatic ? "Automatic" : "Pinned"}: ${resolved.note}`,
+        text: t("{mode}: {note}", {
+          mode: resolved.automatic ? t("Automatic") : t("Pinned"),
+          // Rust wrote the sentence, and Rust writes in English: it names files,
+          // ports and keys exactly as they are.
+          note: resolved.note,
+        }),
       }));
     } catch (err) {
       verdict.append(h("div", {
@@ -788,7 +809,10 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
 
   function updateNote() {
     const used = settings.activeIntegrations.length;
-    note.textContent = `Pick up to ${MAX_ACTIVE} pills to show next to Montes — ${used}/${MAX_ACTIVE} in use. Keys are stored in the Windows Credential Manager, never on disk.`;
+    note.textContent = t(
+      "Pick up to {max} pills to show next to Montes — {used}/{max} in use. Keys are stored in the Windows Credential Manager, never on disk.",
+      { max: MAX_ACTIVE, used },
+    );
   }
 
   for (const def of INTEGRATIONS) {
@@ -888,10 +912,29 @@ function generalSection(): HTMLElement {
     void save();
   });
 
+  // Each language is named in itself: a picker where the choices are written in
+  // the language you are leaving tells you nothing about where they lead.
+  const lang = h("select", {}) as HTMLSelectElement;
+  for (const l of LANGUAGES) {
+    lang.append(h("option", { value: l.id, text: l.label }));
+  }
+  lang.value = settings.language === "ru" ? "ru" : "en";
+  lang.addEventListener("change", () => {
+    settings.language = lang.value;
+    void save();
+    // This window drew itself once, in the old language. Rebuilding it is the
+    // whole of "switching language" here — nothing else has to know.
+    void main();
+  });
+
   return h(
     "section",
     {},
     h("h2", {}, h("span", { text: "General" })),
+    h("div", { class: "row" },
+      h("label", { text: "Language" }),
+      lang,
+    ),
     h("div", { class: "row" },
       h("label", { text: "Sound" }),
       toggle(settings.soundEnabled, (v) => { settings.soundEnabled = v; void save(); }),
@@ -921,6 +964,11 @@ async function main() {
     settings = { ...settings, ...boot.settings };
     version = boot.version;
   }
+  // Applied before anything is built: this window is drawn once, so a sentence
+  // translated afterwards would still be on screen in the old language.
+  applyLanguage(settings.language);
+  document.title = t("Settings — Montes");
+
   const status = (await Bridge.hooksStatus()) ?? {
     installed: false, settingsPath: "", hookPath: "", hookReady: false,
   };
@@ -949,8 +997,13 @@ async function main() {
     }),
   );
 
+  // The island changes the language from its own settings view, so a change made
+  // anywhere else has to land here too — this window is not the only writer.
   void onEvent<Settings>("settings-changed", (s) => {
-    settings = { ...settings, ...s };
+    const merged = { ...settings, ...s };
+    const spoke = merged.language !== settings.language;
+    settings = merged;
+    if (spoke && language() !== settings.language) void main();
   });
 }
 

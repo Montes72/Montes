@@ -1,7 +1,16 @@
 // Minimal DOM helpers — no framework, as specified.
 
+import { t } from "../core/i18n";
+
 type Attrs = Record<string, string | number | boolean | EventListener | undefined>;
 type Child = Node | string | null | undefined | false;
+
+/**
+ * Attributes a person reads: a tooltip, a placeholder, a label for a screen
+ * reader. `class` and `style` are not in here — they are plumbing, and a
+ * translated class name would be a bug.
+ */
+const READABLE = new Set(["title", "placeholder", "aria-label", "alt"]);
 
 export function h<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -12,16 +21,19 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   for (const [k, v] of Object.entries(attrs)) {
     if (v == null || v === false) continue;
     if (k === "class") el.className = String(v);
-    else if (k === "text") el.textContent = String(v);
+    // Every sentence in both windows is set here, so this is where the user's
+    // language is applied. `html` is left alone: the only caller passes markup it
+    // built itself, and translating a fragment of it would be worse than not.
+    else if (k === "text") el.textContent = t(String(v));
     else if (k === "html") el.innerHTML = String(v);
     else if (k.startsWith("on") && typeof v === "function") {
       el.addEventListener(k.slice(2).toLowerCase(), v as EventListener);
     } else if (k === "style") el.setAttribute("style", String(v));
-    else el.setAttribute(k, v === true ? "" : String(v));
+    else el.setAttribute(k, READABLE.has(k) ? t(String(v)) : v === true ? "" : String(v));
   }
   for (const c of children) {
     if (c == null || c === false) continue;
-    el.append(typeof c === "string" ? document.createTextNode(c) : c);
+    el.append(typeof c === "string" ? document.createTextNode(t(c)) : c);
   }
   return el;
 }

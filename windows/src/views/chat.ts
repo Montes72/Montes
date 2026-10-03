@@ -6,6 +6,7 @@ import { ICONS } from "./icons";
 import { Bridge, type ChatContext } from "../core/bridge";
 import { Sound } from "../core/sound";
 import { State, type ChatMessage } from "../core/state";
+import { t } from "../core/i18n";
 import type { ViewHost } from "./views";
 
 let nextId = 1;
@@ -135,7 +136,8 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
         log.scrollTop = log.scrollHeight;
       }
 
-      input.placeholder = State.chatHistory.length === 0 ? "Ask me anything…" : "Continue…";
+      input.placeholder =
+        State.chatHistory.length === 0 ? t("Ask me anything…") : t("Continue…");
       input.disabled = sending;
     },
     focus() {

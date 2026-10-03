@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Phase 10 — a Russian interface
+
+- **The whole app speaks Russian**, chosen in **Settings… → General**. English is
+  the source language and the English sentence *is* the key, so there is one copy
+  of every line: it stays readable in the code, and a language that is missing a
+  sentence falls back to English rather than showing a key or an empty row.
+  Both windows, the island, the drop card and the tray menu are covered, and the
+  switch takes effect at once in each of them rather than asking for a restart.
+- **Translation happens in one place.** `views/dom.ts` is where text enters the
+  DOM, so that is where the lookup happens: a new sentence is translated by
+  adding it to the dictionary, not by finding the view that says it. The handful
+  of places that write text directly — canvas labels, the ticker, the few
+  `.textContent` calls — call `t()` by hand, and those are the only places a
+  contributor has to remember.
+- **A fresh install follows Windows.** Nobody is asked which language they want
+  before the app has said anything; it starts in the one Windows is set to and
+  remembers the answer from then on.
+- **What stays English on purpose.** An error that quotes a path, a port or a flag
+  is not translated, and neither is a project name, a model's answer or a commit
+  hash: half-translating a sentence that quotes a file path helps nobody. The
+  boundary is drawn at *whose words these are*, not at *which window they appear
+  in*.
+- The Russian wording for the Assistant card — the sentence that says which back
+  end would answer and why — is the one piece of Rust that translates, because it
+  is interface, not detail.
+
 ### Phase 9 — opencode, and Allow / Deny for any agent
 
 - **opencode is a supported agent.** It is not a hook config to merge into — it

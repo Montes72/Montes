@@ -2,6 +2,7 @@
 
 import type { BotEmoteName, BotStateName, IslandMode, IslandViewName } from "./layout";
 import type { EyeShape } from "../mochi/engine";
+import { systemLanguage } from "./i18n";
 
 export type AgentSource = "claudeCode" | "n8n" | "agent";
 export type PillBadge = "approval" | "finished" | "error";
@@ -131,6 +132,12 @@ export interface Settings {
   ollamaModel: string;
   /** Extra agents wired to the montes-hook relay (see docs/AGENTS.md). */
   agents: Agent[];
+  /**
+   * What the two windows and the tray menu speak. "en" or "ru"; a fresh install
+   * takes it from Windows rather than asking, and an unknown value reads as
+   * English rather than as an empty screen.
+   */
+  language: string;
 }
 
 export type ProviderPreference = "auto" | "claude" | "ollama";
@@ -161,6 +168,9 @@ export const DEFAULT_SETTINGS: Settings = {
   ollamaUrl: "http://localhost:11434",
   ollamaModel: "qwen3:14b",
   agents: [],
+  // Nobody asks which language they want on a first run; Windows already knows.
+  // Saving the setting later is what makes it stick.
+  language: systemLanguage(),
 };
 
 type Listener = () => void;

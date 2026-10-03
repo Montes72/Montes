@@ -4,6 +4,7 @@
 // terminal (Windows Terminal, VS Code, PowerShell…) and all of them are handled.
 
 import { Bridge, onEvent } from "../core/bridge";
+import { t } from "../core/i18n";
 import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import type { Island } from "./island";
@@ -79,7 +80,9 @@ const TOOL_LABELS: Record<string, string> = {
 };
 
 function stepLabel(tool: string, input: Record<string, unknown>): string {
-  const label = TOOL_LABELS[tool] ?? tool;
+  // Translated here rather than in the ticker: what follows the middle dot is
+  // the user's own file path or command, and only the verb is the app's.
+  const label = t(TOOL_LABELS[tool] ?? tool);
   const str = (k: string) => (typeof input[k] === "string" ? (input[k] as string) : null);
   const cmd = str("command");
   if (cmd) return `${label} · ${cmd.slice(0, 40)}`;
@@ -234,7 +237,7 @@ function handleHook(island: Island, payload: HookPayload) {
 
     case "PostToolUseFailure":
       State.updateTask(agentId, "working");
-      State.appendStep(agentId, "⚠ failed");
+      State.appendStep(agentId, t("⚠ failed"));
       break;
 
     case "Notification": {
@@ -285,11 +288,11 @@ function handleHook(island: Island, payload: HookPayload) {
       break;
 
     case "SubagentStart":
-      State.appendStep(agentId, "+ subagent");
+      State.appendStep(agentId, t("+ subagent"));
       break;
 
     case "SubagentStop":
-      State.appendStep(agentId, "• subagent done");
+      State.appendStep(agentId, t("• subagent done"));
       break;
 
     case "PermissionRequest": {

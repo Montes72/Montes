@@ -107,4 +107,15 @@ They do not run on the GNU target: the binaries die at startup with
 - The provider rule belongs to Rust: `chat::resolve` decides who answers and
   explains why, and the settings window shows that answer. Never let the front end
   reimplement the rule.
+- User-visible text goes through `t()` (`core/i18n.ts`), and **the English string
+  is the key** — never invent a key like `settings.language`, and never rename an
+  English sentence that is already a key without translating both sides. Most text
+  needs no call at all: `views/dom.ts` translates everything handed to `h()`.
+  Reach for `t()` directly only where the DOM is bypassed (canvas labels,
+  `.textContent`, the ticker). Data is not a key: a project name, a model's answer
+  and a Rust error are passed through untouched. `npm run build` runs
+  `scripts/check-i18n.mjs`, which fails the build on a key nothing says any
+  more, a sentence on screen with no translation, a sentence glued together at
+  runtime instead of composed from holes, and a `{hole}` the call site does not
+  fill — the last two are invisible in English and to `tsc`.
 - New views follow the existing app style.

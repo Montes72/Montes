@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "sounds": "node scripts/gen-sounds.mjs",
-    "build": "npm run sounds && tsc --noEmit && vite build",
+    "i18n": "node scripts/check-i18n.mjs",
+    "build": "npm run sounds && tsc --noEmit && npm run i18n && vite build",
     "preview": "vite preview",
     "icons": "node scripts/gen-icons.mjs",
     "tauri": "tauri",

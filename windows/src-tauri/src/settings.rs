@@ -51,6 +51,14 @@ pub struct Settings {
     /// Extra agents wired to the relay (see `Agent`). Empty for a fresh install.
     #[serde(default)]
     pub agents: Vec<Agent>,
+    /// Which language the two windows and the tray menu speak. "en" or "ru";
+    /// anything else is read as English rather than as a refusal to start.
+    #[serde(default = "default_language")]
+    pub language: String,
+}
+
+fn default_language() -> String {
+    "en".to_string()
 }
 
 fn default_model() -> String {
@@ -90,6 +98,7 @@ impl Default for Settings {
             ollama_url: default_ollama_url(),
             ollama_model: default_ollama_model(),
             agents: Vec::new(),
+            language: default_language(),
         }
     }
 }

@@ -6,6 +6,7 @@ import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
 import { Ticker } from "./ticker";
 import { State, type AgentTask } from "../core/state";
+import { t } from "../core/i18n";
 import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
@@ -337,11 +338,29 @@ function buildQuestion(): ViewHost {
       clear(who);
       who.append(agentWho(State.focusTask, "Claude Code is asking a question"));
       const task = State.focusTask;
-      title.textContent = task?.steps.at(-1) ?? "Claude needs an answer.";
+      title.textContent = task?.steps.at(-1) ?? t("Claude needs an answer.");
       clear(row);
       row.append(h("div", { class: "sub", text: "Answer in your terminal — Montes can't reply for you yet." }));
     },
   };
+}
+
+/**
+ * The header and every view, ready to be mounted.
+ *
+ * A view bakes its sentences in when it is built, so this is what has to run
+ * again when the language changes: re-syncing alone would translate the lines a
+ * view rewrites on every frame and leave its buttons in the old language.
+ */
+export function buildChrome(
+  actions: ViewActions,
+  onGeometry: () => void,
+): { header: ViewHost; views: Map<IslandViewName, ViewHost>; children: HTMLElement[] } {
+  const header = buildHeader(actions);
+  const views = buildViews(actions, onGeometry);
+  const viewsEl = h("div", { id: "views" });
+  for (const v of views.values()) viewsEl.append(v.el);
+  return { header, views, children: [header.el, viewsEl] };
 }
 
 // ── Error ─────────────────────────────────────────────────────────────────────
@@ -361,8 +380,9 @@ function buildError(actions: ViewActions): ViewHost {
       const task = State.focusTask;
       clear(who);
       who.append(agentWho(task, task?.source === "n8n" ? "n8n" : "Claude Code"));
-      title.textContent = task?.source === "n8n" ? "Workflow stopped." : "Session stopped on an error.";
-      detail.textContent = task?.steps.at(-1) ?? "No detail available.";
+      title.textContent =
+        task?.source === "n8n" ? t("Workflow stopped.") : t("Session stopped on an error.");
+      detail.textContent = task?.steps.at(-1) ?? t("No detail available.");
     },
   };
 }
@@ -382,7 +402,7 @@ function buildFinished(actions: ViewActions): ViewHost {
     sync() {
       clear(who);
       who.append(agentWho(State.focusTask, "Claude Code finished"));
-      title.textContent = State.focusTask?.steps.at(-1) ?? "Session finished";
+      title.textContent = State.focusTask?.steps.at(-1) ?? t("Session finished");
     },
   };
 }
@@ -463,7 +483,7 @@ function buildSettings(actions: ViewActions): ViewHost {
       soundSwitch.classList.toggle("on", s.soundEnabled);
       volume.value = String(s.soundVolume);
       volume.style.opacity = s.soundEnabled ? "1" : "0.4";
-      autoLabel.textContent = `Auto-close · ${Math.round(s.autoCloseInterval)}s`;
+      autoLabel.textContent = t("Auto-close · {n}s", { n: Math.round(s.autoCloseInterval) });
       segButtons.forEach((b, i) => b.classList.toggle("on", s.autoCloseInterval === [10, 15, 30][i]));
       clear(claudeBadge);
       claudeBadge.append(

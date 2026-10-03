@@ -5,6 +5,7 @@
 // action the spec asks for: ask a question about it.
 
 import { h, clear } from "./dom";
+import { t } from "../core/i18n";
 import { State } from "../core/state";
 import type { ViewActions, ViewHost } from "./views";
 
@@ -70,8 +71,8 @@ export function buildUploading(): ViewHost {
       const done = State.uploadProgress >= 0.999;
       const pct = Math.round(State.uploadProgress * 100);
       label.textContent = done
-        ? `✓  ${State.droppedFile?.name ?? "File"}`
-        : `Uploading ${State.droppedFile?.name ?? "file"}`;
+        ? `✓  ${State.droppedFile?.name ?? t("File")}`
+        : t("Uploading {name}", { name: State.droppedFile?.name ?? t("file") });
       label.classList.toggle("done", done);
       percent.textContent = done ? "" : `${pct} %`;
       const w = State.uploadProgress * 526;
