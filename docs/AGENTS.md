@@ -138,21 +138,38 @@ one file, and refuses to touch a file Montes did not write.
 
 The plugin reports:
 
-| opencode event | Montes |
+| opencode | Montes |
 |---|---|
 | `session.created` | `SessionStart` |
-| `message.part.updated` (a text part) | `UserPromptSubmit` — once per message, not per chunk |
-| `tool.execute.before` | `PreToolUse`, with the tool and its arguments |
-| `tool.execute.after` | `PostToolUse` |
+| `prompt` hook | `UserPromptSubmit` — once per message, not per chunk |
+| `tool.execute.before` hook | `PreToolUse`, with the tool and its arguments |
+| `tool.execute.after` hook | `PostToolUse` |
 | `permission.asked` | `Notification`: "bash needs permission?" |
 | `session.idle` | `Stop` |
 | `session.error` | `StopFailure` |
 | `session.deleted` | `SessionEnd` |
 
+**The prompt comes from a hook, not from the message stream.** opencode re-emits
+a message part as it streams, so watching parts reports the prompt once per
+token — and cannot tell the user's words from the model's reply, because both
+arrive as text parts. The `prompt` hook fires once, before the model sees it, and
+only ever for the user.
+
+**Both plugin APIs, in one file.** opencode 2 replaced the plugin API: `event`
+became `ctx.event.subscribe`, and `tool.execute.*` stopped being events at all.
+The file carries both entry points — `setup()` for 2.x, `server()` for 1.18.29+ —
+so an opencode upgrade cannot silently turn the pill off.
+
 **Permission asks are a badge, not a card.** opencode's plugin API can see a
 permission request but has no way to answer one, so the island would be showing a
 decision it cannot deliver. Montes says what is waiting and leaves the answer where
 opencode asks it — in the terminal opencode is already sitting in.
+
+**How long the plugin waits.** The relay runs synchronously, so a pill cannot
+reorder its own states — which means its timeout is paid on opencode's thread.
+Only the permission badge waits for a human (2 s); every other update gets 300 ms,
+because a relay that is missing, broken or slow must cost the session nothing
+visible. A missing relay exits immediately, so even that budget is never spent.
 
 ## Quick test (Windows)
 

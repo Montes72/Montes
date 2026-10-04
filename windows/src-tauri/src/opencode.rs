@@ -32,6 +32,18 @@ const TEMPLATE: &str = include_str!("../resources/opencode/montes.ts");
 /// else still points at its own relay rather than somebody else's.
 const PLACEHOLDER: &str = "__MONTES_RELAY__";
 
+/// The path as the plugin must spell it.
+///
+/// The template puts this inside a double-quoted JavaScript string, where a
+/// Windows path is a sequence of escapes — `C:\Users\...\bin\montes-hook.exe`
+/// contains `\b`, which is a backspace, and the relay would never be found. The
+/// plugin never spawns this by path parsing, and `spawnSync` accepts "/" on
+/// Windows, so forward slashes are the only spelling that survives the string
+/// literal intact.
+fn relay_for_js(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
 /// The file name inside opencode's plugin directory. Not `montes.ts` alone:
 /// `montes` is the name the app is known by, and the directory is shared with
 /// plugins this app has never heard of.
@@ -70,13 +82,27 @@ pub fn plugin_path() -> PathBuf {
 }
 
 /// The file exactly as it will be on disk: the template with this machine's
-/// relay path, and a trailing newline whatever the template happens to end with.
+/// relay path, LF line endings and a trailing newline.
 ///
 /// Status, preview and write all go through this one function, so "Installed"
 /// can never disagree with what "Install" would produce — which is the kind of
 /// bug that makes a status line a guess.
+///
+/// The line endings are normalized because the template is a text file in a
+/// repository that checks out CRLF on Windows (`core.autocrlf`), so its endings
+/// are a property of how somebody cloned the repo rather than of what they meant
+/// to ship. Left alone, the same Montes build installs a different file — and
+/// then refuses to recognise its own — depending on who built it.
 fn wanted(hook: &str) -> String {
-    let mut text = TEMPLATE.replace(PLACEHOLDER, hook);
+    as_lf(TEMPLATE.replace(PLACEHOLDER, &relay_for_js(Path::new(hook))))
+}
+
+/// LF line endings and a final newline, whatever the input did.
+///
+/// This is what makes the written file's bytes independent of how the template
+/// was checked out.
+fn as_lf(mut text: String) -> String {
+    text = text.replace("\r\n", "\n");
     if !text.ends_with('\n') {
         text.push('\n');
     }
@@ -219,17 +245,91 @@ mod tests {
     #[test]
     fn the_written_plugin_points_at_this_machines_relay() {
         let text = wanted(HOOK);
-        assert!(text.contains(HOOK), "the relay path must be in the file");
+        assert!(text.contains(&relay_for_js(Path::new(HOOK))), "the relay path must be in the file");
         assert!(!text.contains(PLACEHOLDER), "the placeholder must not survive");
         assert!(looks_like_ours(&text));
+    }
+
+    /// The relay path lands inside a double-quoted JavaScript string, so a
+    /// backslash form would be read as escapes and the relay would never be
+    /// found. It compiled, it installed, and it did nothing at all.
+    #[test]
+    fn the_relay_path_survives_the_javascript_string() {
+        let hook = Path::new(HOOK);
+        let text = wanted(HOOK);
+
+        let line = text
+            .lines()
+            .find(|l| l.starts_with("const RELAY = "))
+            .expect("the template still declares the relay");
+        let spelled = line
+            .trim_start_matches("const RELAY = ")
+            .trim_end_matches(';')
+            .trim_matches('"');
+
+        assert_eq!(spelled, hook.to_string_lossy().replace('\\', "/"));
+        assert!(!spelled.contains('\\'), "a backslash here becomes an escape");
+        // The two sequences that would actually corrupt this particular path.
+        assert!(!spelled.contains("\\b"), r#"\b is a backspace"#);
+        assert!(!text.contains(r#"C:\Users"#), "no raw Windows path may reach the file");
+    }
+
+    /// The written file's bytes must not depend on how the template happened to
+    /// be checked out. `core.autocrlf` is true on Windows, so the same template
+    /// arrives with CRLF for one contributor and LF for the next — and the file
+    /// already on disk would stop matching, leaving Montes to report "not
+    /// installed" for a plugin it wrote itself.
+    #[test]
+    fn a_crlf_checkout_writes_the_same_file_as_an_lf_one() {
+        let crlf = TEMPLATE.replace('\n', "\r\n");
+        assert!(crlf.contains("\r\n"), "the test input really is CRLF");
+
+        let from_crlf = as_lf(crlf);
+        let from_lf = as_lf(TEMPLATE.to_string());
+
+        assert_eq!(from_crlf, from_lf);
+        assert!(!from_crlf.contains('\r'), "CRLF reached the file");
+        assert!(from_crlf.ends_with('\n'), "no trailing newline");
+        // Idempotent: writing the file and asking again must give the same bytes.
+        assert_eq!(as_lf(from_crlf.clone()), from_crlf);
     }
 
     #[test]
     fn the_plugin_file_is_recognisably_ours() {
         // The marker is how a later run tells its own file from somebody else's.
         assert!(looks_like_ours(&wanted(HOOK)));
-        assert!(!looks_like_ours("export const Other = async () => ({})"));
+        assert!(!looks_like_ours("export default { id: \"other\", setup() {} }"));
         assert!(!looks_like_ours(""));
+    }
+
+    /// A plugin written for the V1 API does not load in V2 at all, and one that
+    /// only knows V2 does not load in V1. The file ships both, so an opencode
+    /// upgrade cannot silently turn the pill off.
+    #[test]
+    fn the_plugin_declares_both_plugin_apis() {
+        // Formatting is not behaviour: a reformatted template must not fail this
+        // test, and must not be able to pass it for the wrong reason.
+        let flat = wanted(HOOK).split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(flat.contains("export default {"), "V2 reads the default export");
+        assert!(flat.contains("id: \"montes\""), "V2 requires a stable id");
+        assert!(flat.contains("setup(ctx"), "V2 requires setup()");
+        assert!(flat.contains("async server("), "V1 reads server()");
+        assert!(
+            flat.contains("ctx.event.subscribe("),
+            "V1's returned `event` hook became a subscription"
+        );
+        // The prompt and both tool states are hooks in V2 — reading them off the
+        // event stream would find nothing there at all.
+        for hook in ["prompt", "execute.before", "execute.after"] {
+            assert!(
+                flat.contains(&format!(".hook(\"{hook}\"")),
+                "{hook} must be registered as a V2 hook",
+            );
+        }
+        assert!(
+            flat.contains("\"tool.execute.before\": async"),
+            "V1 keeps the tool states as hooks, which is where it had them",
+        );
     }
 
     #[test]
@@ -240,7 +340,7 @@ mod tests {
         // to run inside their agent. That is the honest preview before a write.
         let install = unified_diff("", &wanted(HOOK));
         assert!(install.starts_with("+ // Montes"));
-        assert!(install.contains("+ export const Montes"));
+        assert!(install.contains("+ export default {"));
 
         // Elision is for a mixed diff, where the middle is unchanged noise.
         let edited = format!("{}\nconst UNRELATED = 1;\n", wanted(HOOK));
@@ -316,7 +416,7 @@ mod tests {
     #[test]
     fn a_file_that_is_not_ours_survives_both_directions() {
         let path = scratch("foreign");
-        std::fs::write(&path, "export const SomeoneElse = async () => ({})\n").unwrap();
+        std::fs::write(&path, "export default { id: \"other\", setup() {} }\n").unwrap();
 
         let status = status_at(&path, Path::new(HOOK));
         assert!(status.foreign, "it is in the way and it is not ours");
@@ -325,7 +425,7 @@ mod tests {
         // Installing never edits it either — the UI offers no button, and even if
         // a caller tried, the fingerprint would not be one the user reviewed.
         let preview = preview_at(&path, true).unwrap();
-        assert!(preview.diff.contains("- export const SomeoneElse"));
+        assert!(preview.diff.contains("- export default { id: \"other\""));
 
         // Removing refuses, and says why, rather than deleting somebody's plugin.
         let preview = preview_at(&path, false).unwrap();
@@ -334,7 +434,7 @@ mod tests {
         assert!(path.exists(), "their file is still there");
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "export const SomeoneElse = async () => ({})\n"
+            "export default { id: \"other\", setup() {} }\n"
         );
 
         let _ = std::fs::remove_dir_all(path.parent().unwrap());

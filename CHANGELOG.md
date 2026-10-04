@@ -35,10 +35,28 @@
   contract as everything else it writes: the whole file shown as a diff, a dated
   backup, an explicit click, and a refusal to touch a file Montes did not write.
   The plugin maps opencode's own events onto the relay (`session.created`,
-  `tool.execute.before`, `session.idle`, …), reports the user's prompt **once per
+  `session.idle`, …), reports the user's prompt **once per
   message** instead of once per streamed chunk, and is deliberately silent about
   anything else. It is written so that a missing, broken or slow relay costs an
   opencode session nothing.
+- **The plugin works on both opencode plugin APIs.** opencode 2 replaced the API
+  outright — `event` became `ctx.event.subscribe`, and `tool.execute.*` stopped
+  being events at all — so the file from Phase 9 no longer loaded at all, and an
+  opencode user got no pill and no error explaining why. The shipped file now
+  carries both entry points (`setup()` for 2.x, `server()` for 1.18.29+), so the
+  upgrade cannot silently turn the pill off in either direction. The prompt also
+  moved from the message stream to the `prompt` hook: opencode re-emits a part as
+  it streams, and a text part does not say whether it is the user's words or the
+  model's reply.
+- **A relay path can no longer arrive mangled.** The path is written into a
+  double-quoted JavaScript string, where `C:\Users\…\bin\montes-hook.exe` contains
+  `\b` — a backspace. The plugin installed, reported itself installed, and then did
+  nothing at all. Montes writes the path with forward slashes, which `spawnSync`
+  accepts on Windows, and a test holds the written file to that.
+- **opencode sessions are not held up by a pill nobody is watching.** The relay
+  runs synchronously so states cannot arrive out of order, which means its timeout
+  is paid on opencode's thread. Only the permission badge waits for a human; every
+  other update now gets a fraction of the old budget.
 - **opencode's permission asks are a badge, not a card.** Its plugin API can see a
   request and has no way to answer one, so an Allow / Deny card would be a
   decision that could never reach the tool. The pill says what is waiting and the
