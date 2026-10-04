@@ -13,7 +13,8 @@
     "tauri": "tauri",
     "predev": "cargo build --release -p montes-hook",
     "prebuild": "cargo build --release -p montes-hook",
-    "pack": "tauri build --no-bundle && node scripts/pack.mjs"
+    "pack": "tauri build --no-bundle && node scripts/pack.mjs",
+    "dist": "tauri build --features montes/custom-protocol && node scripts/pack.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

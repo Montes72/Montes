@@ -117,6 +117,7 @@ npm install
 npm run tauri dev      # live-reloading development build
 npm run sounds         # regenerates the 28 WAVs from scripts/gen-sounds.mjs
 npm run pack           # builds the app and drops the release files in windows/release/
+npm run dist           # the same, plus the NSIS installer (one compile, both outputs)
 ```
 
 `npm run dev` alone serves the front end in an ordinary browser, which is enough
@@ -136,13 +137,68 @@ Montes-Windows-X.Y.Z-portable.zip    the versioned archive
 Montes-Windows-portable.zip          the same file under the rolling name
 ```
 
-**There is no installer.** The original NSIS build tripped Defender with
-`Trojan:Win32/WacatacH!ml` — an unsigned installer unpacking its payload into
-temp looks exactly like a packer does — so `bundle.active` is false and the
-supported distribution is the folder you unzip and run. Nothing is installed:
-everything Montes writes lives in `%LOCALAPPDATA%\Montes` and `%APPDATA%\Montes`,
-so deleting those two folders and the program is gone. The `nsis` block stays in
-`tauri.conf.json` if you want the installer back.
+`npm run dist` adds one more:
+
+```
+Montes-Windows-X.Y.Z-setup.exe       the installer (unsigned)
+```
+
+Both are shipped. The installer is what most people want; the zip is what a user
+is told to fall back to when SmartScreen or Defender refuses a binary nobody has
+signed. **Neither is code-signed yet**, so the installer draws a warning that has
+to be dismissed with *More info → Run anyway* — that is the cost of shipping
+unsigned, and it is the reason the portable build exists at all.
+
+### Where the installer puts things
+
+`installMode` is `both`, so the wizard asks: per-user needs no admin and defaults
+to `%LOCALAPPDATA%\Programs\Montes`, all-users needs elevation and defaults to
+`Program Files`. **Both are only defaults** — the *Choose install directory* page
+has a Browse button, so an interactive install can put the program on any drive.
+
+Silent installs are the awkward case: that page is `SkipIfPassive`, so it is
+skipped entirely, and NSIS's `/D=` is overridden by the template's own
+`StrCpy $INSTDIR`. So `setup.exe /S /CurrentUser /D=D:\Apps\Montes` silently
+installs to `%LOCALAPPDATA%\Programs\Montes` — verified, not assumed.
+
+```powershell
+setup.exe /S /CurrentUser     # no prompt, no admin, default location
+setup.exe /S /AllUsers        # elevated, default location
+```
+
+A silent install follows the location a previous install *remembered*, which the
+installer stores in `HKCU\Software\<publisher>\<product>` so that upgrades land
+where the program already is. So install once interactively and pick the folder
+there; every later silent or upgrade install follows it. To move an existing
+installation without the wizard, write that value first:
+
+```powershell
+New-Item -Path 'HKCU:\Software\montes\Montes' -Force | Out-Null
+Set-Item -Path 'HKCU:\Software\montes\Montes' -Value 'D:\Apps\Montes'
+setup.exe /S /CurrentUser
+```
+
+The program and the data are deliberately not on the same path: `$INSTDIR`
+defaults to `%LOCALAPPDATA%\Montes` in `currentUser` mode, and that is exactly
+where this app keeps `bin\`, `inbox\` and its log — the program would have shared
+a directory with the state a user is allowed to delete, which is how an uninstall
+turns into data loss. `Programs` is where Windows itself keeps per-user
+applications. Wherever the program goes, the data stays in `%LOCALAPPDATA%\Montes`
+and `%APPDATA%\Montes`, because those paths come from the environment rather than
+from `$INSTDIR`.
+
+**Uninstalling** removes the program, its Start menu entry, `%LOCALAPPDATA%\Montes\{bin,inbox}`,
+the log, and the registry key that remembers the install directory
+(`nsis/hooks.nsh`, which pins the shell context first — `$LOCALAPPDATA` follows
+the *install* context, and an all-users install points it at `C:\Users\Default`,
+which is nobody's data). It deliberately leaves:
+
+- `%APPDATA%\Montes\settings.json` — your settings, so reinstalling is not a
+  reset;
+- `~/.config/opencode/plugins/montes.ts` and Claude Code's `settings.json` —
+  those are yours, they may carry hooks from other tools, and an uninstaller with
+  no diff and no consent has no business rewriting them. Uninstall the hooks from
+  **Settings** first if you want them gone.
 
 `WebView2Loader.dll` is not optional **for a GNU build** and not a build artefact
 to clean up. The GNU toolchain links WebView2 dynamically where MSVC links it

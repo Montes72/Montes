@@ -60,13 +60,16 @@ Montes; nothing from the original's assets is shipped (see «Assets» below).
 
 ## Install
 
-The distributable is a portable `montes.exe` (plus a zip), **not** an installer:
-the original NSIS installer tripped Microsoft Defender's
-`Trojan:Win32/Wacatac.H!ml` false positive, so until it can be code-signed the
-portable build is the supported way to run Montes.
+Download the latest `Montes-Windows-*-setup.exe` from the fork's **Releases**
+page and run it. It asks whether to install for you or for everyone — the first
+needs no admin rights — and lets you pick the folder, so the program does not have
+to live on `C:`. Everything it writes at runtime (`%LOCALAPPDATA%\Montes`,
+`%APPDATA%\Montes`) stays with Windows' own per-user locations either way.
 
-Download the latest `Montes-Windows-*.zip` from the fork's **Releases** page,
-unzip it anywhere and run `Montes.exe`. No admin rights needed.
+**Neither file is code-signed yet**, so Windows SmartScreen shows a warning the
+first time: click **More info → Run anyway**. If your antivirus refuses it
+outright, take `Montes-Windows-*.zip` from the same page instead, unzip it
+anywhere and run `Montes.exe` — same program, no installer, nothing registered.
 
 There is no notch on a PC, so the island slides out of the top edge of the
 screen instead of hiding inside one. See [`windows/README.md`](windows/README.md)

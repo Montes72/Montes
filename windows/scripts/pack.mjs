@@ -1,11 +1,11 @@
-// Produces the portable distribution: Montes.exe, the relay it installs for Claude
-// Code, and a zip of the two.
+// The portable distribution: Montes.exe, the relay it installs for Claude Code,
+// and a zip of the two.
 //
-// There is no installer. The NSIS build tripped Defender with
-// Trojan:Win32/WacatacH!ml — an unsigned installer unpacking its payload into
-// temp looks exactly like a packer does — so v0 ships a folder you unzip and run
-// instead. `bundle.active` is false in tauri.conf.json for the same reason; the
-// nsis block next to it is left in place so switching it back on is one flag.
+// There is an installer too — `npm run bundle` builds the NSIS setup.exe and this
+// script copies it out beside the zip — but it is not the only way to run Montes,
+// and the zip is what a user is told to download when the installer is refused.
+// An unsigned installer unpacking its payload into temp is what Defender flagged
+// as Trojan:Win32/WacatacH!ml, so both are built and both are named in the notes.
 //
 // The zip is written here rather than by a dependency: it is one hundred lines,
 // and a build tool that cannot run without an install of its own is not much of a
@@ -20,6 +20,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -28,15 +29,29 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-// Two toolchains both build into this project. MSVC is the supported one and
-// writes `target/release`; the GNU one needs an explicit `--target`, so its
-// output lands in `target/<triple>/release`. Prefer the MSVC build when both are
-// there, and let MONTES_TARGET_DIR override when that guess is wrong.
-const targetDir =
-  process.env.MONTES_TARGET_DIR || join(root, "target", "x86_64-pc-windows-msvc", "release");
-const releaseDir = existsSync(join(targetDir, "montes.exe"))
-  ? targetDir
-  : join(root, "target", "release");
+// Two toolchains both build into this project, and neither always writes to
+// `target/release`: MSVC does when it is the default host, but a build given an
+// explicit `--target` lands in `target/<triple>/release` instead. So the question
+// is not "which toolchain is preferred" but "which montes.exe is the one just
+// built".
+//
+// Existence is the wrong test, and it was wrong in a way that looked like the
+// user's mistake: an old explicit-target build sitting in the tree made this
+// pick a day-old exe, and the staleness check further down then failed with
+// "rebuild before packing" immediately after a successful rebuild. Newest wins;
+// MONTES_TARGET_DIR overrides when that is still not what you meant.
+const releaseDir = (() => {
+  if (process.env.MONTES_TARGET_DIR) return process.env.MONTES_TARGET_DIR;
+  const candidates = [
+    join(root, "target", "release"),
+    ...["x86_64-pc-windows-msvc", "x86_64-pc-windows-gnu"]
+      .map((triple) => join(root, "target", triple, "release")),
+  ].filter((dir) => existsSync(join(dir, "montes.exe")));
+  if (candidates.length === 0) return join(root, "target", "release");
+  return candidates.sort(
+    (a, b) => statSync(join(b, "montes.exe")).mtimeMs - statSync(join(a, "montes.exe")).mtimeMs,
+  )[0];
+})();
 const outDir = join(root, "release");
 const { version } = JSON.parse(
   readFileSync(join(root, "src-tauri", "tauri.conf.json"), "utf8"),
@@ -298,6 +313,29 @@ if (alreadyRunning.stdout && /Montes\.exe/i.test(alreadyRunning.stdout)) {
 
 mkdirSync(outDir, { recursive: true });
 
+// `release/` is never cleaned between runs, so a file that has stopped being part
+// of the distribution keeps sitting there looking exactly like one that is still
+// part of it. The GNU-only WebView2Loader.dll is the one that bites: an MSVC
+// build stops shipping it and the zip stops containing it, but the loose copy
+// stays — so `release/` disagreed with the archive beside it.
+//
+// Only names this script writes are considered, so anything a person has put in
+// there is left alone.
+const ours = /^Montes\.exe$|^montes-hook\.exe$|^WebView2Loader\.dll$|^README\.txt$|^Montes-Windows-.*\.(zip|exe)$/;
+const current = new Set([
+  ...CONTENTS.map((c) => c.as),
+  "README.txt",
+  `Montes-Windows-${version}-portable.zip`,
+  "Montes-Windows-portable.zip",
+  `Montes-Windows-${version}-setup.exe`,
+]);
+for (const name of readdirSync(outDir)) {
+  if (ours.test(name) && !current.has(name)) {
+    rmSync(join(outDir, name), { force: true });
+    console.log(`  removed stale ${name}`);
+  }
+}
+
 const entries = [];
 for (const { from, as } of CONTENTS) {
   const mtime = statSync(from).mtime;
@@ -381,6 +419,34 @@ const names = [
 ];
 for (const name of names) writeFileSync(join(outDir, name), archive);
 
+// ── The installer, if one was built ──────────────────────────────────────────
+
+// `npm run bundle` writes the NSIS installer to target/<toolchain>/release/
+// bundle/nsis/, which is inside target/ and so does not travel with the release.
+// It is copied out under the name the release page and the workflow link to.
+//
+// Not an error when it is missing: `npm run pack` builds with --no-bundle on
+// purpose, so a portable-only build is a real thing somebody can want. Saying so
+// beats failing on an artifact nobody asked for.
+const installer = (() => {
+  const dir = join(releaseDir, "bundle", "nsis");
+  if (!existsSync(dir)) return null;
+  const found = readdirSync(dir).filter((n) => n.endsWith("-setup.exe"));
+  if (found.length === 0) return null;
+  // More than one means several versions were built into the same target dir;
+  // the newest mtime is the one this run made.
+  found.sort(
+    (a, b) => statSync(join(dir, b)).mtimeMs - statSync(join(dir, a)).mtimeMs,
+  );
+  return join(dir, found[0]);
+})();
+const installerName = installer
+  ? `Montes-Windows-${version}-setup.exe`
+  : null;
+if (installer) {
+  copyFileSync(installer, join(outDir, installerName));
+}
+
 const mb = (n) => `${(n / 1024 / 1024).toFixed(2)} MB`;
 const { arch, gui } = shipped;
 const sha = createHash("sha256").update(archive).digest("hex");
@@ -397,5 +463,15 @@ console.log();
 for (const name of names) {
   console.log(`    ${name}`);
   console.log(`      ${mb(archive.length)}   sha256 ${sha.slice(0, 32)}…`);
+}
+if (installerName) {
+  const size = statSync(join(outDir, installerName)).size;
+  const digest = createHash("sha256")
+    .update(readFileSync(join(outDir, installerName)))
+    .digest("hex");
+  console.log(`    ${installerName}`);
+  console.log(`      ${mb(size)}   sha256 ${digest.slice(0, 32)}…   (unsigned)`);
+} else {
+  console.log("    no installer   (npm run bundle builds the NSIS setup.exe)");
 }
 console.log();

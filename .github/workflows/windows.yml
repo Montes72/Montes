@@ -12,10 +12,12 @@ on:
 permissions:
   contents: write
 
-# Publishing is paused: Defender flags the unsigned installer as
-# Trojan:Win32/Wacatac.H!ml (false positive, reported to Microsoft). Tags still
-# build, to check the app compiles, but nothing is uploaded. Set this back to
-# 'true' once the installer is signed or the detection is cleared.
+# Publishing is paused: Defender has flagged the unsigned installer as
+# Trojan:Win32/Wacatac.H!ml (a machine-local scan of the current build comes back
+# clean, so this is a reputation verdict on an unsigned binary, not a finding; the
+# report is with Microsoft). Tags still build, to check the app compiles, but
+# nothing is uploaded. Set this back to 'true' once the installer is signed or the
+# detection is cleared.
 env:
   PUBLISH: 'false'
 
@@ -67,13 +69,15 @@ jobs:
           if ($bad) { throw "tag says $tag but $($bad -join '; ')" }
 
       # `npm run build` (run by tauri as beforeBuildCommand) builds montes-hook
-      # first, which tauri.conf.json then bundles as a resource. `pack` then
-      # copies the installer out of target/ under its shipping name.
-      - name: Build and pack the installer
+      # first, which tauri.conf.json then bundles as a resource. `dist` builds the
+      # NSIS installer and then copies both it and the portable zip out of
+      # target/ under their shipping names — one compile, because running the
+      # bundler and the packer separately would compile the app twice.
+      - name: Build the installer and the portable zip
         id: pack
         shell: pwsh
         run: |
-          npm run pack
+          npm run dist
           $version = (Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json).version
           "version=$version" >> $env:GITHUB_OUTPUT
           Get-ChildItem release | Format-Table Name, Length

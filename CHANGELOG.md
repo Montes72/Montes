@@ -2,6 +2,72 @@
 
 ## Unreleased
 
+### Phase 11 — an installer, and a portable build that stays honest
+
+- **Montes installs now.** `npm run dist` builds `Montes-Windows-X.Y.Z-setup.exe`
+  next to the portable zip: an NSIS installer that asks per-user or all-users,
+  writes a Start menu entry, and uninstalls through a real uninstaller. `npm run
+  pack` still builds the portable-only path, so a machine where an unsigned
+  installer is refused still has something to run.
+- **The program does not live in the data folder.** NSIS `currentUser` mode
+  hardcodes the install directory to `$LOCALAPPDATA\<product name>`, which for
+  this app is exactly where `bin\`, `inbox\` and the log live. Installing there
+  would have put `Montes.exe` and `uninstall.exe` in the same directory as the
+  state a user is allowed to delete — the arrangement that turns "remove the
+  program" into "lose my things". `installMode: both` moves the per-user default
+  to `%LOCALAPPDATA%\Programs`, where Windows itself keeps per-user applications,
+  and keeps an all-users install one click away for anyone who wants it.
+- **The install folder is a choice, not a constant — except when it is silent.**
+  The *Choose install directory* page has a Browse button, so an interactive
+  install can put the program on any drive. A silent install cannot: the page is
+  `SkipIfPassive`, and NSIS's `/D=` is overridden by the template's own
+  `StrCpy $INSTDIR`, so `setup.exe /S /D=D:\Apps\Montes` quietly installs to the
+  default and reports success. What a silent install *does* follow is the location
+  an earlier install remembered, which is also how an upgrade stays where the
+  program already is — so install once interactively, pick the folder there, and
+  every later install follows it.
+- **The uninstaller pins the shell context before it deletes anything.**
+  `$LOCALAPPDATA` in an NSIS script follows the *install* context, and an
+  all-users install points it at `C:\Users\Default` — a directory that belongs to
+  nobody. A hook that built a path from it would have quietly missed the real
+  files, and the leftover relay would have kept answering hooks for an app that
+  is no longer installed. `SetShellVarContext current` first, because Montes is a
+  single-user app and its data is always the current user's.
+- **A silent uninstall no longer pins the next install to a dead folder.** The
+  installer remembers where it put the program, in
+  `HKCU\Software\<manufacturer>\<product>`, so that an upgrade lands in the same
+  place — and Tauri clears that key only when the uninstall page has "delete app
+  data" ticked, which `/S` never does. So the key outlived the installation and
+  the next install reused it silently, which is how `bundle.active` coming back
+  would have put `Montes.exe` into `%LOCALAPPDATA%\Montes` — the folder holding
+  `bin\`, `inbox\` and the log — and kept putting it there whatever the install
+  directory was configured to be. The uninstall hook now clears it, guarded at
+  compile time so an empty manufacturer cannot expand into `Software\`.
+- **`npm run pack` picks the build you just made.** It chose the first target
+  directory that contained a `montes.exe` rather than the newest one, so an old
+  explicit-`--target` build sitting in the tree won over the current one — and the
+  staleness check then failed with "rebuild before packing" immediately after a
+  successful rebuild, which reads as the user's mistake rather than the script's.
+  The same script also never cleaned `release/`, so a file that had stopped being
+  part of the distribution stayed there looking like part of it — the MSVC build
+  drops `WebView2Loader.dll`, and the loose copy outlived both the archive and the
+  build that produced it. Stale outputs are pruned now, and only names the script
+  writes are considered, so a file a person dropped in there survives.
+- **Uninstalling does not reach into other people's configuration.** It removes
+  the program, its Start menu entry, `%LOCALAPPDATA%\Montes\{bin,inbox}` and the
+  log. It leaves `%APPDATA%\Montes\settings.json` so that reinstalling is not a
+  reset, and it does not touch `~/.config/opencode/plugins/montes.ts` or Claude
+  Code's `settings.json` — those belong to the user, may carry hooks from other
+  tools, and an uninstaller with no diff and no consent has no business rewriting
+  them. **Settings → Uninstall hooks** removes those, with the diff shown first.
+- **What Defender thinks of it.** A machine-local scan of the current installer
+  comes back clean, so the `Trojan:Win32/Wacatac.H!ml` verdict that kept
+  `bundle.active` false is a reputation judgement about an unsigned binary rather
+  than a finding — unsigned installers that unpack into `%TEMP%` look like
+  packers, and there is no reputation to appeal to yet. Publishing stays paused in
+  the workflow until the binary is signed or the detection is cleared; the
+  portable build is what a user is pointed at in the meantime.
+
 ### Phase 10 — a Russian interface
 
 - **The whole app speaks Russian**, chosen in **Settings… → General**. English is
