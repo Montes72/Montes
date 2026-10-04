@@ -181,3 +181,65 @@ With Montes running, from PowerShell:
 ```
 
 A "demo" pill should appear in the island.
+
+## Checking the island without looking at it
+
+The island is a transparent always-on-top overlay, which makes every ordinary way
+of looking at it unreliable. A screen grab captures whatever is in front of it —
+a fullscreen game owns the display and the island is simply not in the picture.
+`PrintWindow` returns an empty bitmap, because the island is a WebView2 surface.
+And the pill is drawn on a canvas, so the DOM tells you nothing: `innerText`
+reads the same on a working island as on an idle one.
+
+Start Montes with the browser's debug port open and the island can photograph
+itself:
+
+```powershell
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9223"
+.\Montes.exe
+```
+
+The variable has to be set before the process starts: it is read when the first
+WebView2 window is created, and every window in the app shares one browser
+environment (see `BROWSER_ARGS` in `src-tauri/src/lib.rs`).
+
+Both WebView2 windows then list themselves at `http://127.0.0.1:9223/json/list` —
+the island is `http://tauri.localhost/`, the settings window is
+`http://tauri.localhost/settings.html`. **Match the island's URL exactly**: it is
+a prefix of the settings one, so a substring match hands you the settings window
+instead, which captures perfectly and answers nothing.
+
+`Page.captureScreenshot` on the island target returns a PNG of what the island
+would be showing, with nothing in front of it:
+
+```js
+const [island] = (await (await fetch("http://127.0.0.1:9223/json/list")).json()).filter(
+  (t) => t.type === "page" && t.url === "http://tauri.localhost/",
+);
+// connect a WebSocket to island.webSocketDebuggerUrl, then send:
+{ id: 1, method: "Page.captureScreenshot", params: { format: "png" } }
+```
+
+Two more things are worth asking the same page over `Runtime.evaluate`:
+
+- **Is it still ticking?** Count `requestAnimationFrame` calls for a second. An
+  island that has stopped is a different bug from one that is ticking with nothing
+  to draw, and from the outside the two look identical.
+- **Is this view up?** Every view is in the DOM from the start, so a matching
+  string in `innerText` proves nothing — it rules a view *out* and nothing more.
+  That is what makes the screenshot the real instrument.
+
+A `UserPromptSubmit` only reveals the compact pill, and the compact pill has no
+text in it at all: it is the mascot plus a 13 px mini bot per active pill
+(`#mini-grid`), so there is nothing there to read and nothing for OCR to find. To
+check that the island renders and that a pill is really there, use the one event
+that forces it open:
+
+```powershell
+'{"hook_event_name":"PermissionRequest","session_id":"t1","tool_name":"Bash","tool_input":{"command":"echo probe"},"montes_agent":"demo"}' |
+  & "$env:LOCALAPPDATA\Montes\bin\montes-hook.exe" PermissionRequest
+```
+
+Nothing comes back on stdout until a human answers, and the `request_id` you send
+is replaced with one of Montes' own — so this is a check to look at, not one to
+script against.

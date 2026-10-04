@@ -78,6 +78,13 @@
 - An agent whose session ends **while its card is up** no longer leaves a request
   on screen that can never be granted: the card goes back to the terminal and the
   pill is removed.
+- **There is now a way to check the island that cannot be fooled.** It is a
+  transparent overlay with a canvas-drawn pill, so a screen grab shows whatever is
+  in front of it — a fullscreen game is enough — `PrintWindow` returns an empty
+  bitmap for its WebView2 surface, and `innerText` reads the same whether a pill is
+  up or not. `docs/AGENTS.md` now takes the screenshot through the browser's debug
+  port instead, which occludes nothing, and says which questions to ask the page
+  when a blank capture is ambiguous.
 
 ### Phase 8 — an assistant that runs on your own machine
 
